@@ -1,3 +1,4 @@
+import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 import {
   Image,
@@ -9,6 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from './AppHeader';
+import BurningScreen from './bruning';
 import ReviewScreen from './review';
 
 const BRAND_BLUE = '#4F6BFF';
@@ -49,6 +51,7 @@ type StoreDetailProps = {
 function StoreDetail({ onClose, onPressLogo }: StoreDetailProps) {
   return (
     <SafeAreaView style={detailStyles.container} edges={['top', 'bottom']}>
+      <StatusBar style="dark" />
       <AppHeader onPressLogo={onPressLogo} />
 
       <View style={detailStyles.headerRow}>
@@ -141,83 +144,56 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 export default function HomeScreen() {
+  const [activeTab, setActiveTab] = useState<'home' | 'burning' | 'feed' | 'my'>('home');
   const [showReview, setShowReview] = useState(false);
   const [showRewards, setShowRewards] = useState(false);
   const [showStore, setShowStore] = useState(false);
 
   const goHome = () => {
+    setActiveTab('home');
     setShowReview(false);
     setShowRewards(false);
     setShowStore(false);
   };
 
-  if (showReview) {
-    return <ReviewScreen onBack={() => setShowReview(false)} />;
-  }
+  const renderContent = () => {
+    if (activeTab === 'burning') {
+      return (
+        <BurningScreen
+          onOpenStore={() => setShowStore(true)}
+          onPressReview={() => setShowReview(true)}
+        />
+      );
+    }
 
-  if (showStore) {
-    return (
-      <StoreDetail
-        onClose={() => setShowStore(false)}
-        onPressLogo={goHome}
-      />
-    );
-  }
-
-  if (showRewards) {
-    return (
-      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        <AppHeader onPressLogo={goHome} />
-
-        <View style={styles.rewardsHeader}>
-          <TouchableOpacity onPress={() => setShowRewards(false)}>
-            <Text style={styles.backButton}>←</Text>
-          </TouchableOpacity>
-          <Text style={styles.rewardsTitle}>응모 가능한 경품</Text>
-          <View style={{ width: 24 }} />
+    if (activeTab === 'feed') {
+      return (
+        <View style={styles.placeholderWrap}>
+          <Text style={styles.placeholderTitle}>피드</Text>
+          <Text style={styles.placeholderDesc}>
+            여기에 유저들이 올린 리뷰/인증 피드가 들어갈 예정이야
+          </Text>
         </View>
+      );
+    }
 
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.contentContainer}
-          showsVerticalScrollIndicator={false}
-        >
-          {rewardItems.map((item) => (
-            <View key={item.id} style={styles.rewardCard}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rewardCardTitle}>{item.title}</Text>
-                <Text style={styles.rewardCardSubtitle}>{item.subtitle}</Text>
-              </View>
+    if (activeTab === 'my') {
+      return (
+        <View style={styles.placeholderWrap}>
+          <Text style={styles.placeholderTitle}>마이</Text>
+          <Text style={styles.placeholderDesc}>
+            여기에 내 프로필, 적립 내역, 응모 내역이 들어갈 예정이야
+          </Text>
+        </View>
+      );
+    }
 
-              <View style={styles.rewardRight}>
-                <View style={styles.pbBadge}>
-                  <Text style={styles.pbBadgeText}>{item.cost}</Text>
-                </View>
-
-                <TouchableOpacity style={styles.rewardApplyButton}>
-                  <Text style={styles.rewardApplyButtonText}>응모하기</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))}
-
-          <View style={{ height: 110 }} />
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <AppHeader onPressLogo={goHome} />
-
+    return (
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={false}
       >
-     
-
         <View style={styles.heroCard}>
           <Text style={styles.heroEyebrow}>TODAY&apos;S REWARD</Text>
           <Text style={styles.heroTitle}>
@@ -250,7 +226,7 @@ export default function HomeScreen() {
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>버닝 매장</Text>
-          <TouchableOpacity>
+          <TouchableOpacity onPress={() => setActiveTab('burning')}>
             <Text style={styles.sectionMore}>전체보기</Text>
           </TouchableOpacity>
         </View>
@@ -384,15 +360,91 @@ export default function HomeScreen() {
 
         <View style={{ height: 110 }} />
       </ScrollView>
+    );
+  };
+
+  if (showReview) {
+    return <ReviewScreen onBack={() => setShowReview(false)} />;
+  }
+
+  if (showStore) {
+    return (
+      <StoreDetail
+        onClose={() => setShowStore(false)}
+        onPressLogo={goHome}
+      />
+    );
+  }
+
+  if (showRewards) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <StatusBar style="dark" />
+        <AppHeader onPressLogo={goHome} />
+
+        <View style={styles.rewardsHeader}>
+          <TouchableOpacity onPress={() => setShowRewards(false)}>
+            <Text style={styles.backButton}>←</Text>
+          </TouchableOpacity>
+          <Text style={styles.rewardsTitle}>응모 가능한 경품</Text>
+          <View style={{ width: 24 }} />
+        </View>
+
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.contentContainer}
+          showsVerticalScrollIndicator={false}
+        >
+          {rewardItems.map((item) => (
+            <View key={item.id} style={styles.rewardCard}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rewardCardTitle}>{item.title}</Text>
+                <Text style={styles.rewardCardSubtitle}>{item.subtitle}</Text>
+              </View>
+
+              <View style={styles.rewardRight}>
+                <View style={styles.pbBadge}>
+                  <Text style={styles.pbBadgeText}>{item.cost}</Text>
+                </View>
+
+                <TouchableOpacity style={styles.rewardApplyButton}>
+                  <Text style={styles.rewardApplyButtonText}>응모하기</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+
+          <View style={{ height: 110 }} />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <StatusBar style="dark" />
+      <AppHeader onPressLogo={goHome} />
+
+      {renderContent()}
 
       <View style={styles.tabBar}>
-        <View style={styles.tabItem}>
-          <Text style={styles.tabActive}>홈</Text>
-        </View>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => setActiveTab('home')}
+        >
+          <Text style={activeTab === 'home' ? styles.tabActive : styles.tab}>
+            홈
+          </Text>
+        </TouchableOpacity>
 
-        <View style={styles.tabItem}>
-          <Text style={styles.tab}>버닝</Text>
-        </View>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => setActiveTab('burning')}
+        >
+          <Text style={activeTab === 'burning' ? styles.tabActive : styles.tab}>
+            버닝
+          </Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.fab}
@@ -401,19 +453,50 @@ export default function HomeScreen() {
           <Text style={styles.fabText}>+</Text>
         </TouchableOpacity>
 
-        <View style={styles.tabItem}>
-          <Text style={styles.tab}>피드</Text>
-        </View>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => setActiveTab('feed')}
+        >
+          <Text style={activeTab === 'feed' ? styles.tabActive : styles.tab}>
+            피드
+          </Text>
+        </TouchableOpacity>
 
-        <View style={styles.tabItem}>
-          <Text style={styles.tab}>마이</Text>
-        </View>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => setActiveTab('my')}
+        >
+          <Text style={activeTab === 'my' ? styles.tabActive : styles.tab}>
+            마이
+          </Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  placeholderWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+
+  placeholderTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 10,
+  },
+
+  placeholderDesc: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#6B7280',
+    textAlign: 'center',
+  },
+
   container: {
     flex: 1,
     backgroundColor: '#F7F8FA',
@@ -427,24 +510,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 4,
     paddingBottom: 0,
-  },
-
-  header: {
-    marginBottom: 20,
-  },
-
-  location: {
-    fontSize: 13,
-    color: '#6B7280',
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-
-  hello: {
-    fontSize: 30,
-    color: '#111827',
-    fontWeight: '800',
-    lineHeight: 36,
   },
 
   heroCard: {
@@ -543,7 +608,7 @@ const styles = StyleSheet.create({
   },
 
   sectionTitle: {
-    fontSize: 22,
+    fontSize: 18,
     color: '#111827',
     fontWeight: '800',
   },
@@ -555,11 +620,13 @@ const styles = StyleSheet.create({
   },
 
   storeCard: {
-    backgroundColor: '#101114',
+    backgroundColor: '#FFFFFF',
     borderRadius: 24,
     padding: 14,
     marginBottom: 14,
     flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
 
   storeImage: {
@@ -581,20 +648,20 @@ const styles = StyleSheet.create({
   },
 
   storeName: {
-    color: '#FFFFFF',
+    color: '#111827',
     fontSize: 18,
     fontWeight: '800',
     marginBottom: 4,
   },
 
   storeCategory: {
-    color: '#A5B4FC',
+    color: '#6B7280',
     fontSize: 14,
     fontWeight: '600',
   },
 
   storePbBadge: {
-    backgroundColor: '#1F2A44',
+    backgroundColor: '#EEF2FF',
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -602,13 +669,13 @@ const styles = StyleSheet.create({
   },
 
   storePbBadgeText: {
-    color: '#7DA0FF',
+    color: '#4F6BFF',
     fontSize: 13,
     fontWeight: '800',
   },
 
   recommendBadge: {
-    backgroundColor: '#1E3A8A',
+    backgroundColor: '#EEF2FF',
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -616,13 +683,13 @@ const styles = StyleSheet.create({
   },
 
   recommendBadgeText: {
-    color: '#DBEAFE',
+    color: '#4F6BFF',
     fontSize: 13,
     fontWeight: '800',
   },
 
   storeAddress: {
-    color: '#9CA3AF',
+    color: '#4B5563',
     fontSize: 14,
     lineHeight: 20,
     marginTop: 10,
@@ -726,6 +793,8 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     backgroundColor: '#FFFFFF',
     paddingBottom: 10,
+    zIndex: 999,
+    elevation: 999,
   },
 
   tabItem: {
@@ -759,7 +828,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.22,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
-    elevation: 8,
+    elevation: 1000,
+    zIndex: 1000,
   },
 
   fabText: {

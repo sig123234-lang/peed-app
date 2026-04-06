@@ -38,7 +38,7 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 18,
     paddingTop: 6,
-    paddingBottom: 14,
+    paddingBottom: 6,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
