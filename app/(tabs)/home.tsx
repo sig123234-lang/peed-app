@@ -11,37 +11,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from './AppHeader';
 import BurningScreen from './bruning';
+import PeedScreen from './peed';
 import ReviewScreen from './review';
 
 const BRAND_BLUE = '#4F6BFF';
-
-type RewardItem = {
-  id: number;
-  title: string;
-  subtitle: string;
-  cost: string;
-};
-
-const rewardItems: RewardItem[] = [
-  {
-    id: 1,
-    title: '프리미엄 호텔 숙박권',
-    subtitle: '이번 주 응모 가능',
-    cost: '3 PB',
-  },
-  {
-    id: 2,
-    title: '고급 다이닝 식사권',
-    subtitle: '인기 경품',
-    cost: '3 PB',
-  },
-  {
-    id: 3,
-    title: '럭셔리 라이프스타일 상품',
-    subtitle: '스페셜 시즌 경품',
-    cost: '5 PB',
-  },
-];
 
 type StoreDetailProps = {
   onClose: () => void;
@@ -144,15 +117,13 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 export default function HomeScreen() {
-  const [activeTab, setActiveTab] = useState<'home' | 'burning' | 'feed' | 'my'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'burning' | 'peed' | 'my'>('home');
   const [showReview, setShowReview] = useState(false);
-  const [showRewards, setShowRewards] = useState(false);
   const [showStore, setShowStore] = useState(false);
 
   const goHome = () => {
     setActiveTab('home');
     setShowReview(false);
-    setShowRewards(false);
     setShowStore(false);
   };
 
@@ -166,15 +137,8 @@ export default function HomeScreen() {
       );
     }
 
-    if (activeTab === 'feed') {
-      return (
-        <View style={styles.placeholderWrap}>
-          <Text style={styles.placeholderTitle}>피드</Text>
-          <Text style={styles.placeholderDesc}>
-            여기에 유저들이 올린 리뷰/인증 피드가 들어갈 예정이야
-          </Text>
-        </View>
-      );
+    if (activeTab === 'peed') {
+      return <PeedScreen />;
     }
 
     if (activeTab === 'my') {
@@ -201,7 +165,7 @@ export default function HomeScreen() {
             오늘의 경품
           </Text>
           <Text style={styles.heroDesc}>
-            리뷰 남기고 PB를 모아 바로 응모해봐.
+            리뷰 남기고 PB를 모아 바로 응모해 보세요.
           </Text>
 
           <View style={styles.heroRewardCard}>
@@ -218,144 +182,85 @@ export default function HomeScreen() {
 
           <TouchableOpacity
             style={styles.heroButton}
-            onPress={() => setShowRewards(true)}
+            onPress={() => setActiveTab('peed')}
           >
             <Text style={styles.heroButtonText}>응모 가능한 경품 보기</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>버닝 매장</Text>
-          <TouchableOpacity onPress={() => setActiveTab('burning')}>
-            <Text style={styles.sectionMore}>전체보기</Text>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionEyebrow}>BURNING STORE</Text>
+          <Text style={styles.sectionTitleLarge}>버닝 매장</Text>
+          <Text style={styles.sectionDesc}>
+            추가 PB를 받을 수 있는 매장을 확인해 보세요.
+          </Text>
+
+          <View style={styles.storeCard}>
+            <Image
+              source={{
+                uri: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=1200&auto=format&fit=crop',
+              }}
+              style={styles.storeImage}
+            />
+
+            <View style={styles.storeInfo}>
+              <View style={styles.storeTopRow}>
+                <View>
+                  <Text style={styles.storeName}>샤월의주방</Text>
+                  <Text style={styles.storeCategory}>요리주점</Text>
+                </View>
+
+                <View style={styles.storePbBadge}>
+                  <Text style={styles.storePbBadgeText}>+10</Text>
+                </View>
+              </View>
+
+              <Text style={styles.storeAddress}>
+                📍 서울 마포구 와우산로21길 19 2층
+              </Text>
+
+              <TouchableOpacity onPress={() => setShowStore(true)}>
+                <Text style={styles.storeLink}>매장 보기 〉</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.storeCardLast}>
+            <Image
+              source={{
+                uri: 'https://images.unsplash.com/photo-1559339352-11d035aa65de?q=80&w=1200&auto=format&fit=crop',
+              }}
+              style={styles.storeImage}
+            />
+
+            <View style={styles.storeInfo}>
+              <View style={styles.storeTopRow}>
+                <View>
+                  <Text style={styles.storeName}>담벗</Text>
+                  <Text style={styles.storeCategory}>한식주점</Text>
+                </View>
+
+                <View style={styles.storePbBadge}>
+                  <Text style={styles.storePbBadgeText}>+10</Text>
+                </View>
+              </View>
+
+              <Text style={styles.storeAddress}>
+                📍 서울 마포구 어울마당로 54 1층
+              </Text>
+
+              <TouchableOpacity onPress={() => setShowStore(true)}>
+                <Text style={styles.storeLink}>매장 보기 〉</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={styles.sectionBottomButton}
+            onPress={() => setActiveTab('burning')}
+          >
+            <Text style={styles.sectionBottomButtonText}>버닝 매장 보러가기</Text>
           </TouchableOpacity>
-        </View>
-
-        <View style={styles.storeCard}>
-          <Image
-            source={{
-              uri: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=1200&auto=format&fit=crop',
-            }}
-            style={styles.storeImage}
-          />
-
-          <View style={styles.storeInfo}>
-            <View style={styles.storeTopRow}>
-              <View>
-                <Text style={styles.storeName}>샤월의주방</Text>
-                <Text style={styles.storeCategory}>요리주점</Text>
-              </View>
-
-              <View style={styles.storePbBadge}>
-                <Text style={styles.storePbBadgeText}>+10</Text>
-              </View>
-            </View>
-
-            <Text style={styles.storeAddress}>
-              📍 서울 마포구 와우산로21길 19 2층
-            </Text>
-
-            <TouchableOpacity onPress={() => setShowStore(true)}>
-              <Text style={styles.storeLink}>매장 보기 〉</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.storeCard}>
-          <Image
-            source={{
-              uri: 'https://images.unsplash.com/photo-1559339352-11d035aa65de?q=80&w=1200&auto=format&fit=crop',
-            }}
-            style={styles.storeImage}
-          />
-
-          <View style={styles.storeInfo}>
-            <View style={styles.storeTopRow}>
-              <View>
-                <Text style={styles.storeName}>담벗</Text>
-                <Text style={styles.storeCategory}>한식주점</Text>
-              </View>
-
-              <View style={styles.storePbBadge}>
-                <Text style={styles.storePbBadgeText}>+10</Text>
-              </View>
-            </View>
-
-            <Text style={styles.storeAddress}>
-              📍 서울 마포구 어울마당로 54 1층
-            </Text>
-
-            <TouchableOpacity onPress={() => setShowStore(true)}>
-              <Text style={styles.storeLink}>매장 보기 〉</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>오늘의 추천</Text>
-          <TouchableOpacity>
-            <Text style={styles.sectionMore}>전체보기</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.storeCard}>
-          <Image
-            source={{
-              uri: 'https://images.unsplash.com/photo-1552566626-52f8b828add9?q=80&w=1200&auto=format&fit=crop',
-            }}
-            style={styles.storeImage}
-          />
-
-          <View style={styles.storeInfo}>
-            <View style={styles.storeTopRow}>
-              <View>
-                <Text style={styles.storeName}>연남 파스타 바</Text>
-                <Text style={styles.storeCategory}>양식</Text>
-              </View>
-
-              <View style={styles.recommendBadge}>
-                <Text style={styles.recommendBadgeText}>추천</Text>
-              </View>
-            </View>
-
-            <Text style={styles.storeAddress}>
-              📍 서울 마포구 동교로 38길 12
-            </Text>
-
-            <TouchableOpacity onPress={() => setShowStore(true)}>
-              <Text style={styles.storeLink}>매장 보기 〉</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.storeCard}>
-          <Image
-            source={{
-              uri: 'https://images.unsplash.com/photo-1521017432531-fbd92d768814?q=80&w=1200&auto=format&fit=crop',
-            }}
-            style={styles.storeImage}
-          />
-
-          <View style={styles.storeInfo}>
-            <View style={styles.storeTopRow}>
-              <View>
-                <Text style={styles.storeName}>상수 하이볼클럽</Text>
-                <Text style={styles.storeCategory}>바 · 펍</Text>
-              </View>
-
-              <View style={styles.recommendBadge}>
-                <Text style={styles.recommendBadgeText}>추천</Text>
-              </View>
-            </View>
-
-            <Text style={styles.storeAddress}>
-              📍 서울 마포구 독막로 18길 7
-            </Text>
-
-            <TouchableOpacity onPress={() => setShowStore(true)}>
-              <Text style={styles.storeLink}>매장 보기 〉</Text>
-            </TouchableOpacity>
-          </View>
         </View>
 
         <View style={{ height: 110 }} />
@@ -376,50 +281,6 @@ export default function HomeScreen() {
     );
   }
 
-  if (showRewards) {
-    return (
-      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        <StatusBar style="dark" />
-        <AppHeader onPressLogo={goHome} />
-
-        <View style={styles.rewardsHeader}>
-          <TouchableOpacity onPress={() => setShowRewards(false)}>
-            <Text style={styles.backButton}>←</Text>
-          </TouchableOpacity>
-          <Text style={styles.rewardsTitle}>응모 가능한 경품</Text>
-          <View style={{ width: 24 }} />
-        </View>
-
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.contentContainer}
-          showsVerticalScrollIndicator={false}
-        >
-          {rewardItems.map((item) => (
-            <View key={item.id} style={styles.rewardCard}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rewardCardTitle}>{item.title}</Text>
-                <Text style={styles.rewardCardSubtitle}>{item.subtitle}</Text>
-              </View>
-
-              <View style={styles.rewardRight}>
-                <View style={styles.pbBadge}>
-                  <Text style={styles.pbBadgeText}>{item.cost}</Text>
-                </View>
-
-                <TouchableOpacity style={styles.rewardApplyButton}>
-                  <Text style={styles.rewardApplyButtonText}>응모하기</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))}
-
-          <View style={{ height: 110 }} />
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
@@ -432,18 +293,24 @@ export default function HomeScreen() {
           style={styles.tabItem}
           onPress={() => setActiveTab('home')}
         >
-          <Text style={activeTab === 'home' ? styles.tabActive : styles.tab}>
-            홈
-          </Text>
+          <View style={activeTab === 'home' ? styles.tabPillActive : styles.tabPill}>
+            <Text style={activeTab === 'home' ? styles.tabActive : styles.tab}>
+              홈
+            </Text>
+          </View>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.tabItem}
           onPress={() => setActiveTab('burning')}
         >
-          <Text style={activeTab === 'burning' ? styles.tabActive : styles.tab}>
-            버닝
-          </Text>
+          <View
+            style={activeTab === 'burning' ? styles.tabPillActive : styles.tabPill}
+          >
+            <Text style={activeTab === 'burning' ? styles.tabActive : styles.tab}>
+              버닝
+            </Text>
+          </View>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -455,20 +322,24 @@ export default function HomeScreen() {
 
         <TouchableOpacity
           style={styles.tabItem}
-          onPress={() => setActiveTab('feed')}
+          onPress={() => setActiveTab('peed')}
         >
-          <Text style={activeTab === 'feed' ? styles.tabActive : styles.tab}>
-            피드
-          </Text>
+          <View style={activeTab === 'peed' ? styles.tabPillActive : styles.tabPill}>
+            <Text style={activeTab === 'peed' ? styles.tabActive : styles.tab}>
+              피드
+            </Text>
+          </View>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.tabItem}
           onPress={() => setActiveTab('my')}
         >
-          <Text style={activeTab === 'my' ? styles.tabActive : styles.tab}>
-            마이
-          </Text>
+          <View style={activeTab === 'my' ? styles.tabPillActive : styles.tabPill}>
+            <Text style={activeTab === 'my' ? styles.tabActive : styles.tab}>
+              마이
+            </Text>
+          </View>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -508,8 +379,8 @@ const styles = StyleSheet.create({
 
   contentContainer: {
     paddingHorizontal: 18,
-    paddingTop: 4,
-    paddingBottom: 0,
+    paddingTop: 6,
+    paddingBottom: 110,
   },
 
   heroCard: {
@@ -599,31 +470,53 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-    marginTop: 2,
+  sectionCard: {
+    backgroundColor: '#EEF2FF',
+    borderRadius: 28,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#DCE6FF',
+    marginBottom: 24,
   },
 
-  sectionTitle: {
-    fontSize: 18,
-    color: '#111827',
-    fontWeight: '800',
-  },
-
-  sectionMore: {
-    fontSize: 14,
+  sectionEyebrow: {
     color: BRAND_BLUE,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+
+  sectionTitleLarge: {
+    color: '#111827',
+    fontSize: 28,
+    fontWeight: '800',
+    lineHeight: 34,
+    marginBottom: 8,
+  },
+
+  sectionDesc: {
+    color: '#4B5563',
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 16,
   },
 
   storeCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
     padding: 14,
-    marginBottom: 14,
+    marginBottom: 12,
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+
+  storeCardLast: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 14,
+    marginBottom: 0,
     flexDirection: 'row',
     borderWidth: 1,
     borderColor: '#E5E7EB',
@@ -674,20 +567,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  recommendBadge: {
-    backgroundColor: '#EEF2FF',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    alignSelf: 'flex-start',
-  },
-
-  recommendBadgeText: {
-    color: '#4F6BFF',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-
   storeAddress: {
     color: '#4B5563',
     fontSize: 14,
@@ -702,81 +581,18 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  rewardsHeader: {
-    paddingHorizontal: 18,
-    paddingTop: 4,
-    paddingBottom: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  rewardsTitle: {
-    color: '#111827',
-    fontSize: 22,
-    fontWeight: '800',
-  },
-
-  backButton: {
-    color: BRAND_BLUE,
-    fontSize: 24,
-    fontWeight: '800',
-  },
-
-  rewardCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 18,
-    flexDirection: 'row',
-    marginBottom: 12,
-    alignItems: 'center',
-  },
-
-  rewardCardTitle: {
-    color: '#111827',
-    fontSize: 17,
-    fontWeight: '800',
-    marginBottom: 6,
-  },
-
-  rewardCardSubtitle: {
-    color: '#6B7280',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  rewardRight: {
-    alignItems: 'flex-end',
-    gap: 10,
-  },
-
-  pbBadge: {
-    backgroundColor: '#EEF2FF',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-
-  pbBadgeText: {
-    color: BRAND_BLUE,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-
-  rewardApplyButton: {
-    height: 36,
-    paddingHorizontal: 14,
-    borderRadius: 12,
+  sectionBottomButton: {
+    height: 50,
+    borderRadius: 16,
     backgroundColor: BRAND_BLUE,
     justifyContent: 'center',
     alignItems: 'center',
+    marginTop: 14,
   },
 
-  rewardApplyButtonText: {
+  sectionBottomButtonText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: '800',
   },
 
@@ -785,14 +601,21 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    height: 86,
+    height: 85,
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderColor: '#E5E7EB',
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
     backgroundColor: '#FFFFFF',
-    paddingBottom: 10,
+    paddingTop: 0,
+    paddingBottom: 0,
+    shadowColor: '#111827',
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: -4 },
+    borderTopWidth: 1,
+    borderColor: '#EEF2F7',
     zIndex: 999,
     elevation: 999,
   },
@@ -800,41 +623,64 @@ const styles = StyleSheet.create({
   tabItem: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  tabPill: {
+    minWidth: 72,
+    height: 38,
+    paddingHorizontal: 16,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
+
+  tabPillActive: {
+    minWidth: 72,
+    height: 38,
+    paddingHorizontal: 16,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
   },
 
   tab: {
-    fontSize: 12,
-    color: '#888888',
-    fontWeight: '600',
+    fontSize: 15,
+    color: '#9CA3AF',
+    fontWeight: '700',
   },
 
   tabActive: {
-    fontSize: 12,
+    fontSize: 15,
     color: BRAND_BLUE,
     fontWeight: '800',
   },
 
   fab: {
     position: 'absolute',
-    top: -26,
+    top: -28,
     alignSelf: 'center',
-    width: 62,
-    height: 62,
-    borderRadius: 31,
+    width: 66,
+    height: 66,
+    borderRadius: 33,
     backgroundColor: BRAND_BLUE,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: BRAND_BLUE,
-    shadowOpacity: 0.22,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
     elevation: 1000,
     zIndex: 1000,
+    borderWidth: 4,
+    borderColor: '#F7F8FA',
   },
 
   fabText: {
     color: '#FFFFFF',
-    fontSize: 30,
+    fontSize: 32,
     fontWeight: '800',
     marginTop: -2,
   },
