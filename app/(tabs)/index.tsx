@@ -56,7 +56,7 @@ export default function IndexScreen() {
   if (showLogin) {
     return (
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        <StatusBar style="dark" />
+        <StatusBar style="dark" translucent={false} backgroundColor="#FFFFFF" />
 
         <View style={styles.loginWrap}>
           <View>
@@ -95,9 +95,6 @@ export default function IndexScreen() {
               동의하게 됩니다.
             </Text>
 
-            <TouchableOpacity onPress={() => setShowLogin(false)}>
-              <Text style={styles.backText}>온보딩 다시 보기</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </SafeAreaView>
@@ -106,7 +103,7 @@ export default function IndexScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <StatusBar style="dark" />
+      <StatusBar style="dark" translucent={false} backgroundColor="#FFFFFF" />
 
       <View style={styles.topRow}>
         <Text style={styles.brand}>PEED</Text>

@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from './AppHeader';
 import BurningScreen from './bruning';
+import MyScreen from './my';
 import PeedScreen from './peed';
 import ReviewScreen from './review';
 
@@ -142,14 +143,7 @@ export default function HomeScreen() {
     }
 
     if (activeTab === 'my') {
-      return (
-        <View style={styles.placeholderWrap}>
-          <Text style={styles.placeholderTitle}>마이</Text>
-          <Text style={styles.placeholderDesc}>
-            여기에 내 프로필, 적립 내역, 응모 내역이 들어갈 예정이야
-          </Text>
-        </View>
-      );
+      return <MyScreen />;
     }
 
     return (
