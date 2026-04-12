@@ -1,7 +1,10 @@
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Image,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,12 +20,126 @@ import ReviewScreen from './review';
 
 const BRAND_BLUE = '#4F6BFF';
 
+/**
+ * 개발 환경에 따라 바꿔야 할 수 있음
+ * - 웹: http://127.0.0.1:4000
+ * - 안드로이드 에뮬레이터: http://10.0.2.2:4000
+ * - 실기기: http://내PC로컬IP:4000
+ */
+const API_BASE_URL = 'http://127.0.0.1:4000';
+
+type StoreData = {
+  id: string;
+  name: string;
+  category?: string;
+  address?: string;
+  roadAddress?: string;
+  phone?: string;
+  businessHours?: string;
+  description?: string;
+  pbReward?: number;
+  representativeImageUrl?: string;
+  naverPlaceUrl?: string;
+  imageUrls?: string[];
+  isBurning?: boolean;
+  burningStartAt?: string | null;
+  burningEndAt?: string | null;
+};
+
+type PrizeData = {
+  id: string;
+  title: string;
+  description?: string;
+  imageUrl?: string;
+  marketPrice?: number;
+  requiredPb?: number;
+  maxEntries?: number;
+  totalEntries?: number;
+  winnerCount?: number;
+  announcementDate?: string | null;
+  drawDate?: string | null;
+  status?: string;
+  isFeatured?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type NoticeData = {
+  id: string;
+  title: string;
+  summary?: string;
+  category?: string;
+  isPinned?: boolean;
+  publishedAt?: string | null;
+  createdAt?: string;
+};
+
+type HomeData = {
+  notices: NoticeData[];
+  burningStores: StoreData[];
+  featuredPrizes: PrizeData[];
+  latestPrizes: PrizeData[];
+};
+
 type StoreDetailProps = {
   onClose: () => void;
   onPressLogo: () => void;
+  store?: StoreData | null;
 };
 
-function StoreDetail({ onClose, onPressLogo }: StoreDetailProps) {
+function formatDateTime(value?: string | null) {
+  if (!value) return '-';
+
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
+function StoreDetail({ onClose, onPressLogo, store }: StoreDetailProps) {
+  const imageUrls = useMemo(() => {
+    if (Array.isArray(store?.imageUrls) && store.imageUrls.length > 0) {
+      return store.imageUrls.filter(Boolean).slice(0, 10);
+    }
+
+    if (store?.representativeImageUrl) {
+      return [store.representativeImageUrl];
+    }
+
+    return [];
+  }, [store?.imageUrls, store?.representativeImageUrl]);
+
+  const displayAddress = store?.roadAddress || store?.address || '-';
+  const displayPb = store?.pbReward ?? 0;
+
+  const burningPeriod =
+    store?.burningStartAt || store?.burningEndAt
+      ? `${formatDateTime(store?.burningStartAt)} ~ ${formatDateTime(
+          store?.burningEndAt
+        )}`
+      : '-';
+
+  const openNaverPlace = async () => {
+    if (!store?.naverPlaceUrl) {
+      Alert.alert('안내', '네이버 플레이스 URL이 없습니다.');
+      return;
+    }
+
+    try {
+      const supported = await Linking.canOpenURL(store.naverPlaceUrl);
+
+      if (!supported) {
+        Alert.alert('오류', '네이버 플레이스를 열 수 없습니다.');
+        return;
+      }
+
+      await Linking.openURL(store.naverPlaceUrl);
+    } catch {
+      Alert.alert('오류', '네이버 플레이스를 여는 중 문제가 발생했습니다.');
+    }
+  };
+
   return (
     <SafeAreaView style={detailStyles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
@@ -40,46 +157,47 @@ function StoreDetail({ onClose, onPressLogo }: StoreDetailProps) {
         contentContainerStyle={detailStyles.contentContainer}
         showsVerticalScrollIndicator={false}
       >
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={detailStyles.imageRow}
-        >
-          <Image
-            source={{
-              uri: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=1200&auto=format&fit=crop',
-            }}
-            style={detailStyles.mainImage}
-          />
-          <Image
-            source={{
-              uri: 'https://images.unsplash.com/photo-1559339352-11d035aa65de?q=80&w=1200&auto=format&fit=crop',
-            }}
-            style={detailStyles.sideImage}
-          />
-          <Image
-            source={{
-              uri: 'https://images.unsplash.com/photo-1552566626-52f8b828add9?q=80&w=1200&auto=format&fit=crop',
-            }}
-            style={detailStyles.sideImage}
-          />
-        </ScrollView>
+        {imageUrls.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={detailStyles.imageRow}
+          >
+            {imageUrls.map((url, index) => (
+              <Image
+                key={`${url}-${index}`}
+                source={{ uri: url }}
+                style={index === 0 ? detailStyles.mainImage : detailStyles.sideImage}
+              />
+            ))}
+          </ScrollView>
+        ) : (
+          <View style={detailStyles.emptyImageBox}>
+            <Text style={detailStyles.emptyImageText}>매장 사진 없음</Text>
+          </View>
+        )}
 
         <View style={detailStyles.summaryCard}>
           <View style={detailStyles.summaryTopRow}>
-            <View>
-              <Text style={detailStyles.storeName}>샤월의주방</Text>
-              <Text style={detailStyles.storeCategory}>요리주점</Text>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={detailStyles.storeName}>{store?.name || '-'}</Text>
+              <Text style={detailStyles.storeCategory}>{store?.category || '-'}</Text>
             </View>
 
-            <View style={detailStyles.pbBadge}>
-              <Text style={detailStyles.pbBadgeText}>+10 PB</Text>
+            <View style={detailStyles.summaryBadges}>
+              {store?.isBurning ? (
+                <View style={detailStyles.burningBadge}>
+                  <Text style={detailStyles.burningBadgeText}>버닝</Text>
+                </View>
+              ) : null}
+
+              <View style={detailStyles.pbBadge}>
+                <Text style={detailStyles.pbBadgeText}>+{displayPb} PB</Text>
+              </View>
             </View>
           </View>
 
-          <Text style={detailStyles.addressText}>
-            📍 서울 마포구 와우산로21길 19 2층
-          </Text>
+          <Text style={detailStyles.addressText}>📍 {displayAddress}</Text>
         </View>
 
         <View style={detailStyles.infoCard}>
@@ -87,18 +205,24 @@ function StoreDetail({ onClose, onPressLogo }: StoreDetailProps) {
             <Text style={detailStyles.sectionBadgeText}>매장 정보</Text>
           </View>
 
-          <InfoRow label="주소" value="서울 마포구 와우산로21길 19 2층" />
-          <InfoRow label="영업시간" value="매일 17:00 - 02:00" />
-          <InfoRow label="전화번호" value="02-000-0000" />
-          <InfoRow label="대표메뉴" value="트러플 파스타, 하이볼, 감바스" />
-          <InfoRow label="편의" value="예약, 포장, 단체 이용 가능" />
+          <InfoRow label="주소" value={displayAddress} />
+          <InfoRow label="영업시간" value={store?.businessHours || '-'} />
+          <InfoRow label="전화번호" value={store?.phone || '-'} />
+          <InfoRow label="버닝 기간" value={burningPeriod} />
+          <InfoRow label="설명" value={store?.description || '-'} />
         </View>
 
         <View style={{ height: 100 }} />
       </ScrollView>
 
       <View style={detailStyles.bottomBar}>
-        <TouchableOpacity style={detailStyles.bottomButton}>
+        <TouchableOpacity
+          style={[
+            detailStyles.bottomButton,
+            !store?.naverPlaceUrl && { backgroundColor: '#CBD5E1' },
+          ]}
+          onPress={openNaverPlace}
+        >
           <Text style={detailStyles.bottomButtonText}>
             네이버 플레이스에서 확인하기
           </Text>
@@ -117,22 +241,140 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function StoreCard({
+  store,
+  onPress,
+}: {
+  store: StoreData;
+  onPress: () => void;
+}) {
+  const thumbnail =
+    store.representativeImageUrl ||
+    (Array.isArray(store.imageUrls) && store.imageUrls.length > 0
+      ? store.imageUrls[0]
+      : undefined);
+
+  return (
+    <View style={styles.storeCard}>
+      {thumbnail ? (
+        <Image source={{ uri: thumbnail }} style={styles.storeImage} />
+      ) : (
+        <View style={[styles.storeImage, styles.storeImageEmpty]}>
+          <Text style={styles.storeImageEmptyText}>사진 없음</Text>
+        </View>
+      )}
+
+      <View style={styles.storeInfo}>
+        <View style={styles.storeTopRow}>
+          <View>
+            <Text style={styles.storeName}>{store.name}</Text>
+            <Text style={styles.storeCategory}>{store.category || '-'}</Text>
+          </View>
+
+          <View style={styles.storePbBadge}>
+            <Text style={styles.storePbBadgeText}>+{store.pbReward ?? 0}</Text>
+          </View>
+        </View>
+
+        <Text style={styles.storeAddress}>
+          📍 {store.roadAddress || store.address || '-'}
+        </Text>
+
+        <TouchableOpacity onPress={onPress}>
+          <Text style={styles.storeLink}>매장 보기 〉</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 export default function HomeScreen() {
   const [activeTab, setActiveTab] = useState<'home' | 'burning' | 'peed' | 'my'>('home');
   const [showReview, setShowReview] = useState(false);
-  const [showStore, setShowStore] = useState(false);
+  const [selectedStore, setSelectedStore] = useState<StoreData | null>(null);
+
+  const [homeData, setHomeData] = useState<HomeData>({
+    notices: [],
+    burningStores: [],
+    featuredPrizes: [],
+    latestPrizes: [],
+  });
+
+  const [loadingHome, setLoadingHome] = useState(true);
+  const [openingStore, setOpeningStore] = useState(false);
+  const [homeError, setHomeError] = useState('');
+
+  const featuredPrize = useMemo(() => {
+    if (homeData.featuredPrizes.length > 0) return homeData.featuredPrizes[0];
+    if (homeData.latestPrizes.length > 0) return homeData.latestPrizes[0];
+    return null;
+  }, [homeData]);
+
+  const fetchHomeData = useCallback(async () => {
+    try {
+      setLoadingHome(true);
+      setHomeError('');
+
+      const response = await fetch(`${API_BASE_URL}/app/home`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.message || '홈 데이터를 불러오지 못했습니다.');
+      }
+
+      setHomeData({
+        notices: Array.isArray(data?.home?.notices) ? data.home.notices : [],
+        burningStores: Array.isArray(data?.home?.burningStores) ? data.home.burningStores : [],
+        featuredPrizes: Array.isArray(data?.home?.featuredPrizes) ? data.home.featuredPrizes : [],
+        latestPrizes: Array.isArray(data?.home?.latestPrizes) ? data.home.latestPrizes : [],
+      });
+    } catch (error: any) {
+      setHomeError(error?.message || '홈 데이터를 불러오지 못했습니다.');
+    } finally {
+      setLoadingHome(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHomeData();
+  }, [fetchHomeData]);
 
   const goHome = () => {
     setActiveTab('home');
     setShowReview(false);
-    setShowStore(false);
+    setSelectedStore(null);
+  };
+
+  const openStore = async (store: StoreData) => {
+    try {
+      setOpeningStore(true);
+
+      const response = await fetch(`${API_BASE_URL}/app/stores/${store.id}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.message || '매장 정보를 불러오지 못했습니다.');
+      }
+
+      setSelectedStore(data.store);
+    } catch (error: any) {
+      Alert.alert('오류', error?.message || '매장 정보를 불러오지 못했습니다.');
+    } finally {
+      setOpeningStore(false);
+    }
   };
 
   const renderContent = () => {
     if (activeTab === 'burning') {
       return (
         <BurningScreen
-          onOpenStore={() => setShowStore(true)}
+          onOpenStore={() => {
+            if (homeData.burningStores.length === 0) {
+              Alert.alert('안내', '버닝 매장이 없습니다.');
+              return;
+            }
+            openStore(homeData.burningStores[0]);
+          }}
           onPressReview={() => setShowReview(true)}
         />
       );
@@ -144,6 +386,30 @@ export default function HomeScreen() {
 
     if (activeTab === 'my') {
       return <MyScreen />;
+    }
+
+    if (loadingHome) {
+      return (
+        <View style={styles.placeholderWrap}>
+          <ActivityIndicator size="large" color={BRAND_BLUE} />
+          <Text style={[styles.placeholderDesc, { marginTop: 12 }]}>
+            홈 데이터를 불러오는 중...
+          </Text>
+        </View>
+      );
+    }
+
+    if (homeError) {
+      return (
+        <View style={styles.placeholderWrap}>
+          <Text style={styles.placeholderTitle}>홈 로딩 실패</Text>
+          <Text style={styles.placeholderDesc}>{homeError}</Text>
+
+          <TouchableOpacity style={styles.heroButton} onPress={fetchHomeData}>
+            <Text style={styles.heroButtonText}>다시 불러오기</Text>
+          </TouchableOpacity>
+        </View>
+      );
     }
 
     return (
@@ -163,14 +429,21 @@ export default function HomeScreen() {
           </Text>
 
           <View style={styles.heroRewardCard}>
-            <View>
-              <Text style={styles.heroRewardTitle}>프리미엄 호텔 숙박권</Text>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={styles.heroRewardTitle}>
+                {featuredPrize?.title || '현재 진행 중인 경품이 없습니다'}
+              </Text>
               <Text style={styles.heroRewardSubtitle}>
-                이번 주 가장 인기 있는 응모
+                {featuredPrize
+                  ? `${featuredPrize.requiredPb ?? 0}PB로 응모 가능`
+                  : '어드민에서 경품을 등록하면 여기에 표시됩니다'}
               </Text>
             </View>
+
             <View style={styles.heroPbCircle}>
-              <Text style={styles.heroPbCircleText}>3PB</Text>
+              <Text style={styles.heroPbCircleText}>
+                {featuredPrize ? `${featuredPrize.requiredPb ?? 0}PB` : '-'}
+              </Text>
             </View>
           </View>
 
@@ -189,65 +462,23 @@ export default function HomeScreen() {
             추가 PB를 받을 수 있는 매장을 확인해 보세요.
           </Text>
 
-          <View style={styles.storeCard}>
-            <Image
-              source={{
-                uri: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=1200&auto=format&fit=crop',
-              }}
-              style={styles.storeImage}
-            />
-
-            <View style={styles.storeInfo}>
-              <View style={styles.storeTopRow}>
-                <View>
-                  <Text style={styles.storeName}>샤월의주방</Text>
-                  <Text style={styles.storeCategory}>요리주점</Text>
-                </View>
-
-                <View style={styles.storePbBadge}>
-                  <Text style={styles.storePbBadgeText}>+10</Text>
-                </View>
+          {homeData.burningStores.length > 0 ? (
+            homeData.burningStores.map((store, index) => (
+              <View
+                key={store.id}
+                style={{ marginBottom: index === homeData.burningStores.length - 1 ? 0 : 12 }}
+              >
+                <StoreCard store={store} onPress={() => openStore(store)} />
               </View>
-
-              <Text style={styles.storeAddress}>
-                📍 서울 마포구 와우산로21길 19 2층
+            ))
+          ) : (
+            <View style={styles.emptyStoresCard}>
+              <Text style={styles.emptyStoresTitle}>버닝 매장이 아직 없습니다</Text>
+              <Text style={styles.emptyStoresDesc}>
+                어드민에서 버닝 매장을 등록하면 이곳에 자동으로 표시됩니다.
               </Text>
-
-              <TouchableOpacity onPress={() => setShowStore(true)}>
-                <Text style={styles.storeLink}>매장 보기 〉</Text>
-              </TouchableOpacity>
             </View>
-          </View>
-
-          <View style={styles.storeCardLast}>
-            <Image
-              source={{
-                uri: 'https://images.unsplash.com/photo-1559339352-11d035aa65de?q=80&w=1200&auto=format&fit=crop',
-              }}
-              style={styles.storeImage}
-            />
-
-            <View style={styles.storeInfo}>
-              <View style={styles.storeTopRow}>
-                <View>
-                  <Text style={styles.storeName}>담벗</Text>
-                  <Text style={styles.storeCategory}>한식주점</Text>
-                </View>
-
-                <View style={styles.storePbBadge}>
-                  <Text style={styles.storePbBadgeText}>+10</Text>
-                </View>
-              </View>
-
-              <Text style={styles.storeAddress}>
-                📍 서울 마포구 어울마당로 54 1층
-              </Text>
-
-              <TouchableOpacity onPress={() => setShowStore(true)}>
-                <Text style={styles.storeLink}>매장 보기 〉</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          )}
 
           <TouchableOpacity
             style={styles.sectionBottomButton}
@@ -266,11 +497,12 @@ export default function HomeScreen() {
     return <ReviewScreen onBack={() => setShowReview(false)} />;
   }
 
-  if (showStore) {
+  if (selectedStore) {
     return (
       <StoreDetail
-        onClose={() => setShowStore(false)}
+        onClose={() => setSelectedStore(null)}
         onPressLogo={goHome}
+        store={selectedStore}
       />
     );
   }
@@ -281,6 +513,15 @@ export default function HomeScreen() {
       <AppHeader onPressLogo={goHome} />
 
       {renderContent()}
+
+      {openingStore ? (
+        <View style={styles.loadingOverlay}>
+          <View style={styles.loadingBox}>
+            <ActivityIndicator size="small" color={BRAND_BLUE} />
+            <Text style={styles.loadingText}>매장 정보를 불러오는 중...</Text>
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.tabBar}>
         <TouchableOpacity
@@ -346,6 +587,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
+    gap: 14,
   },
 
   placeholderTitle: {
@@ -456,6 +698,7 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND_BLUE,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 18,
   },
 
   heroButtonText: {
@@ -496,21 +739,31 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
 
-  storeCard: {
+  emptyStoresCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
-    padding: 14,
-    marginBottom: 12,
-    flexDirection: 'row',
+    padding: 18,
     borderWidth: 1,
     borderColor: '#E5E7EB',
   },
 
-  storeCardLast: {
+  emptyStoresTitle: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+
+  emptyStoresDesc: {
+    color: '#6B7280',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+
+  storeCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
     padding: 14,
-    marginBottom: 0,
     flexDirection: 'row',
     borderWidth: 1,
     borderColor: '#E5E7EB',
@@ -521,6 +774,18 @@ const styles = StyleSheet.create({
     height: 112,
     borderRadius: 16,
     marginRight: 14,
+    backgroundColor: '#E5E7EB',
+  },
+
+  storeImageEmpty: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  storeImageEmptyText: {
+    color: '#6B7280',
+    fontWeight: '700',
+    fontSize: 12,
   },
 
   storeInfo: {
@@ -590,6 +855,31 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
+  loadingOverlay: {
+    position: 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(17,24,39,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2000,
+  },
+
+  loadingBox: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+
+  loadingText: {
+    color: '#111827',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+
   tabBar: {
     position: 'absolute',
     left: 0,
@@ -602,8 +892,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
     backgroundColor: '#FFFFFF',
-    paddingTop: 0,
-    paddingBottom: 0,
     shadowColor: '#111827',
     shadowOpacity: 0.08,
     shadowRadius: 14,
@@ -733,6 +1021,7 @@ const detailStyles = StyleSheet.create({
     height: 190,
     borderRadius: 20,
     marginRight: 10,
+    backgroundColor: '#E5E7EB',
   },
 
   sideImage: {
@@ -740,6 +1029,21 @@ const detailStyles = StyleSheet.create({
     height: 190,
     borderRadius: 20,
     marginRight: 10,
+    backgroundColor: '#E5E7EB',
+  },
+
+  emptyImageBox: {
+    height: 190,
+    marginHorizontal: 18,
+    borderRadius: 20,
+    backgroundColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  emptyImageText: {
+    color: '#6B7280',
+    fontWeight: '700',
   },
 
   summaryCard: {
@@ -758,6 +1062,25 @@ const detailStyles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 12,
     gap: 10,
+  },
+
+  summaryBadges: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+
+  burningBadge: {
+    backgroundColor: '#F3E8FF',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    alignSelf: 'flex-start',
+  },
+
+  burningBadgeText: {
+    color: '#7C3AED',
+    fontSize: 13,
+    fontWeight: '800',
   },
 
   storeName: {
