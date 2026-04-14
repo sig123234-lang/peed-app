@@ -4,7 +4,8 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Linking,
+  Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,20 +14,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from './AppHeader';
-import BurningScreen from './bruning';
+import BurningScreen from './burning';
 import MyScreen from './my';
 import PeedScreen from './peed';
 import ReviewScreen from './review';
+import StoreDetail from './storeDetail';
 
 const BRAND_BLUE = '#4F6BFF';
-
-/**
- * 개발 환경에 따라 바꿔야 할 수 있음
- * - 웹: http://127.0.0.1:4000
- * - 안드로이드 에뮬레이터: http://10.0.2.2:4000
- * - 실기기: http://내PC로컬IP:4000
- */
-const API_BASE_URL = 'http://127.0.0.1:4000';
+const API_BASE_URL = 'http://172.30.1.65:4000';
 
 type StoreData = {
   id: string;
@@ -81,165 +76,20 @@ type HomeData = {
   latestPrizes: PrizeData[];
 };
 
-type StoreDetailProps = {
-  onClose: () => void;
-  onPressLogo: () => void;
-  store?: StoreData | null;
-};
+type MyTabType = 'reviews' | 'entries' | 'wins';
 
-function formatDateTime(value?: string | null) {
-  if (!value) return '-';
-
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
-}
-
-function StoreDetail({ onClose, onPressLogo, store }: StoreDetailProps) {
-  const imageUrls = useMemo(() => {
-    if (Array.isArray(store?.imageUrls) && store.imageUrls.length > 0) {
-      return store.imageUrls.filter(Boolean).slice(0, 10);
-    }
-
-    if (store?.representativeImageUrl) {
-      return [store.representativeImageUrl];
-    }
-
-    return [];
-  }, [store?.imageUrls, store?.representativeImageUrl]);
-
-  const displayAddress = store?.roadAddress || store?.address || '-';
-  const displayPb = store?.pbReward ?? 0;
-
-  const burningPeriod =
-    store?.burningStartAt || store?.burningEndAt
-      ? `${formatDateTime(store?.burningStartAt)} ~ ${formatDateTime(
-          store?.burningEndAt
-        )}`
-      : '-';
-
-  const openNaverPlace = async () => {
-    if (!store?.naverPlaceUrl) {
-      Alert.alert('안내', '네이버 플레이스 URL이 없습니다.');
-      return;
-    }
-
-    try {
-      const supported = await Linking.canOpenURL(store.naverPlaceUrl);
-
-      if (!supported) {
-        Alert.alert('오류', '네이버 플레이스를 열 수 없습니다.');
-        return;
-      }
-
-      await Linking.openURL(store.naverPlaceUrl);
-    } catch {
-      Alert.alert('오류', '네이버 플레이스를 여는 중 문제가 발생했습니다.');
-    }
+type NotificationItem = {
+  id: string;
+  type: '공지' | '경품' | '버닝' | 'PB' | '당첨';
+  title: string;
+  body: string;
+  time: string;
+  unread: boolean;
+  noticeData?: {
+    title: string;
+    content: string;
   };
-
-  return (
-    <SafeAreaView style={detailStyles.container} edges={['top', 'bottom']}>
-      <StatusBar style="dark" />
-      <AppHeader onPressLogo={onPressLogo} />
-
-      <View style={detailStyles.headerRow}>
-        <Text style={detailStyles.headerTitle}>매장 정보</Text>
-        <TouchableOpacity style={detailStyles.closeButton} onPress={onClose}>
-          <Text style={detailStyles.closeText}>×</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView
-        style={detailStyles.scroll}
-        contentContainerStyle={detailStyles.contentContainer}
-        showsVerticalScrollIndicator={false}
-      >
-        {imageUrls.length > 0 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={detailStyles.imageRow}
-          >
-            {imageUrls.map((url, index) => (
-              <Image
-                key={`${url}-${index}`}
-                source={{ uri: url }}
-                style={index === 0 ? detailStyles.mainImage : detailStyles.sideImage}
-              />
-            ))}
-          </ScrollView>
-        ) : (
-          <View style={detailStyles.emptyImageBox}>
-            <Text style={detailStyles.emptyImageText}>매장 사진 없음</Text>
-          </View>
-        )}
-
-        <View style={detailStyles.summaryCard}>
-          <View style={detailStyles.summaryTopRow}>
-            <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={detailStyles.storeName}>{store?.name || '-'}</Text>
-              <Text style={detailStyles.storeCategory}>{store?.category || '-'}</Text>
-            </View>
-
-            <View style={detailStyles.summaryBadges}>
-              {store?.isBurning ? (
-                <View style={detailStyles.burningBadge}>
-                  <Text style={detailStyles.burningBadgeText}>버닝</Text>
-                </View>
-              ) : null}
-
-              <View style={detailStyles.pbBadge}>
-                <Text style={detailStyles.pbBadgeText}>+{displayPb} PB</Text>
-              </View>
-            </View>
-          </View>
-
-          <Text style={detailStyles.addressText}>📍 {displayAddress}</Text>
-        </View>
-
-        <View style={detailStyles.infoCard}>
-          <View style={detailStyles.sectionBadge}>
-            <Text style={detailStyles.sectionBadgeText}>매장 정보</Text>
-          </View>
-
-          <InfoRow label="주소" value={displayAddress} />
-          <InfoRow label="영업시간" value={store?.businessHours || '-'} />
-          <InfoRow label="전화번호" value={store?.phone || '-'} />
-          <InfoRow label="버닝 기간" value={burningPeriod} />
-          <InfoRow label="설명" value={store?.description || '-'} />
-        </View>
-
-        <View style={{ height: 100 }} />
-      </ScrollView>
-
-      <View style={detailStyles.bottomBar}>
-        <TouchableOpacity
-          style={[
-            detailStyles.bottomButton,
-            !store?.naverPlaceUrl && { backgroundColor: '#CBD5E1' },
-          ]}
-          onPress={openNaverPlace}
-        >
-          <Text style={detailStyles.bottomButtonText}>
-            네이버 플레이스에서 확인하기
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={detailStyles.infoRow}>
-      <Text style={detailStyles.infoLabel}>{label}</Text>
-      <Text style={detailStyles.infoValue}>{value}</Text>
-    </View>
-  );
-}
+};
 
 function StoreCard({
   store,
@@ -266,7 +116,7 @@ function StoreCard({
 
       <View style={styles.storeInfo}>
         <View style={styles.storeTopRow}>
-          <View>
+          <View style={{ flex: 1, paddingRight: 10 }}>
             <Text style={styles.storeName}>{store.name}</Text>
             <Text style={styles.storeCategory}>{store.category || '-'}</Text>
           </View>
@@ -290,8 +140,16 @@ function StoreCard({
 
 export default function HomeScreen() {
   const [activeTab, setActiveTab] = useState<'home' | 'burning' | 'peed' | 'my'>('home');
+  const [myInitialTab, setMyInitialTab] = useState<MyTabType>('reviews');
   const [showReview, setShowReview] = useState(false);
   const [selectedStore, setSelectedStore] = useState<StoreData | null>(null);
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+
+  const [noticeModalVisible, setNoticeModalVisible] = useState(false);
+  const [selectedNotice, setSelectedNotice] = useState<{
+    title: string;
+    content: string;
+  } | null>(null);
 
   const [homeData, setHomeData] = useState<HomeData>({
     notices: [],
@@ -299,6 +157,54 @@ export default function HomeScreen() {
     featuredPrizes: [],
     latestPrizes: [],
   });
+
+  const [notifications, setNotifications] = useState<NotificationItem[]>([
+    {
+      id: 'n1',
+      type: '공지',
+      title: 'PEED 오픈 안내',
+      body: '피드 서비스가 정식 오픈되었습니다. 공지를 확인해 보세요.',
+      time: '방금 전',
+      unread: true,
+      noticeData: {
+        title: 'PEED 오픈 안내',
+        content:
+          '피드 서비스가 정식 오픈되었습니다. 버닝 매장 방문 후 리뷰를 남기고 PB를 받아보세요.',
+      },
+    },
+    {
+      id: 'n2',
+      type: '경품',
+      title: '새 경품이 추가되었어요',
+      body: '닌텐도 스위치 OLED 응모가 시작되었어요.',
+      time: '10분 전',
+      unread: true,
+    },
+    {
+      id: 'n3',
+      type: '당첨',
+      title: '당첨 결과가 도착했어요',
+      body: '응모한 경품의 당첨 여부를 확인해 보세요.',
+      time: '1시간 전',
+      unread: true,
+    },
+    {
+      id: 'n4',
+      type: '버닝',
+      title: '새 버닝 매장이 추가되었어요',
+      body: '지금 추가 PB를 받을 수 있는 매장이 열렸어요.',
+      time: '2시간 전',
+      unread: false,
+    },
+    {
+      id: 'n5',
+      type: 'PB',
+      title: 'PB가 적립되었어요',
+      body: '리뷰 인증 완료로 10PB가 적립되었어요.',
+      time: '어제',
+      unread: false,
+    },
+  ]);
 
   const [loadingHome, setLoadingHome] = useState(true);
   const [openingStore, setOpeningStore] = useState(false);
@@ -309,6 +215,18 @@ export default function HomeScreen() {
     if (homeData.latestPrizes.length > 0) return homeData.latestPrizes[0];
     return null;
   }, [homeData]);
+
+  const headerPbAmount = useMemo(() => {
+    if (activeTab === 'my') return '128';
+    if (activeTab === 'peed') return '48';
+    if (activeTab === 'burning') return '32';
+    return '128';
+  }, [activeTab]);
+
+  const unreadAlarmCount = useMemo(
+    () => notifications.filter((item) => item.unread).length,
+    [notifications]
+  );
 
   const fetchHomeData = useCallback(async () => {
     try {
@@ -341,8 +259,75 @@ export default function HomeScreen() {
 
   const goHome = () => {
     setActiveTab('home');
+    setMyInitialTab('reviews');
     setShowReview(false);
     setSelectedStore(null);
+    setIsNotificationOpen(false);
+  };
+
+  const toggleNotifications = () => {
+    setIsNotificationOpen((prev) => !prev);
+  };
+
+  const markAllNotificationsRead = () => {
+    setNotifications((prev) =>
+      prev.map((item) => ({
+        ...item,
+        unread: false,
+      }))
+    );
+  };
+
+  const removeNotification = (id: string) => {
+    setNotifications((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleNotificationPress = (item: NotificationItem) => {
+    setNotifications((prev) =>
+      prev.map((n) =>
+        n.id === item.id
+          ? {
+              ...n,
+              unread: false,
+            }
+          : n
+      )
+    );
+
+    if (item.type === '공지' && item.noticeData) {
+      setSelectedNotice(item.noticeData);
+      setNoticeModalVisible(true);
+      setIsNotificationOpen(false);
+      removeNotification(item.id);
+      return;
+    }
+
+    if (item.type === '경품') {
+      setActiveTab('peed');
+      setIsNotificationOpen(false);
+      removeNotification(item.id);
+      return;
+    }
+
+    if (item.type === '당첨') {
+      setMyInitialTab('wins');
+      setActiveTab('my');
+      setIsNotificationOpen(false);
+      removeNotification(item.id);
+      return;
+    }
+
+    if (item.type === '버닝') {
+      setIsNotificationOpen(false);
+      removeNotification(item.id);
+      return;
+    }
+
+    if (item.type === 'PB') {
+      setIsNotificationOpen(false);
+      removeNotification(item.id);
+      return;
+    }
   };
 
   const openStore = async (store: StoreData) => {
@@ -357,6 +342,7 @@ export default function HomeScreen() {
       }
 
       setSelectedStore(data.store);
+      setIsNotificationOpen(false);
     } catch (error: any) {
       Alert.alert('오류', error?.message || '매장 정보를 불러오지 못했습니다.');
     } finally {
@@ -385,7 +371,7 @@ export default function HomeScreen() {
     }
 
     if (activeTab === 'my') {
-      return <MyScreen />;
+      return <MyScreen initialTab={myInitialTab} />;
     }
 
     if (loadingHome) {
@@ -501,7 +487,6 @@ export default function HomeScreen() {
     return (
       <StoreDetail
         onClose={() => setSelectedStore(null)}
-        onPressLogo={goHome}
         store={selectedStore}
       />
     );
@@ -510,9 +495,120 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
-      <AppHeader onPressLogo={goHome} />
+
+      <AppHeader
+        pbAmount={headerPbAmount}
+        onPressLogo={goHome}
+        onPressBell={toggleNotifications}
+        unreadCount={unreadAlarmCount}
+      />
 
       {renderContent()}
+
+      {isNotificationOpen ? (
+        <>
+          <Pressable
+            style={styles.notificationBackdrop}
+            onPress={() => setIsNotificationOpen(false)}
+          />
+
+          <View style={styles.notificationPopup}>
+            <View style={styles.notificationHeader}>
+              <Text style={styles.notificationTitle}>알림</Text>
+
+              <TouchableOpacity onPress={markAllNotificationsRead}>
+                <Text style={styles.notificationReadAll}>모두 확인</Text>
+              </TouchableOpacity>
+            </View>
+
+            {notifications.length === 0 ? (
+              <View style={styles.notificationEmptyWrap}>
+                <Text style={styles.notificationEmptyText}>
+                  새로운 알림이 없습니다.
+                </Text>
+              </View>
+            ) : (
+              <ScrollView
+                style={styles.notificationList}
+                contentContainerStyle={styles.notificationListContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {notifications.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[
+                      styles.notificationItem,
+                      item.unread && styles.notificationItemUnread,
+                    ]}
+                    activeOpacity={0.85}
+                    onPress={() => handleNotificationPress(item)}
+                  >
+                    <View style={styles.notificationItemTop}>
+                      <View style={styles.notificationTypeBadge}>
+                        <Text style={styles.notificationTypeBadgeText}>
+                          {item.type}
+                        </Text>
+                      </View>
+
+                      <Text style={styles.notificationTime}>{item.time}</Text>
+                    </View>
+
+                    <View style={styles.notificationTitleRow}>
+                      <Text style={styles.notificationItemTitle}>{item.title}</Text>
+                      {item.unread ? <View style={styles.notificationUnreadDot} /> : null}
+                    </View>
+
+                    <Text style={styles.notificationBody}>{item.body}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </>
+      ) : null}
+
+      <Modal
+        visible={noticeModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setNoticeModalVisible(false);
+          setSelectedNotice(null);
+        }}
+      >
+        <Pressable
+          style={styles.noticeModalBackdrop}
+          onPress={() => {
+            setNoticeModalVisible(false);
+            setSelectedNotice(null);
+          }}
+        >
+          <Pressable style={styles.noticeModalCard}>
+            <Text style={styles.noticeModalTitle}>
+              {selectedNotice?.title || '공지'}
+            </Text>
+
+            <ScrollView
+              style={styles.noticeModalScroll}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.noticeModalContent}>
+                {selectedNotice?.content || ''}
+              </Text>
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.noticeModalButton}
+              onPress={() => {
+                setNoticeModalVisible(false);
+                setSelectedNotice(null);
+              }}
+            >
+              <Text style={styles.noticeModalButtonText}>확인</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {openingStore ? (
         <View style={styles.loadingOverlay}>
@@ -526,7 +622,10 @@ export default function HomeScreen() {
       <View style={styles.tabBar}>
         <TouchableOpacity
           style={styles.tabItem}
-          onPress={() => setActiveTab('home')}
+          onPress={() => {
+            setActiveTab('home');
+            setMyInitialTab('reviews');
+          }}
         >
           <View style={activeTab === 'home' ? styles.tabPillActive : styles.tabPill}>
             <Text style={activeTab === 'home' ? styles.tabActive : styles.tab}>
@@ -539,9 +638,7 @@ export default function HomeScreen() {
           style={styles.tabItem}
           onPress={() => setActiveTab('burning')}
         >
-          <View
-            style={activeTab === 'burning' ? styles.tabPillActive : styles.tabPill}
-          >
+          <View style={activeTab === 'burning' ? styles.tabPillActive : styles.tabPill}>
             <Text style={activeTab === 'burning' ? styles.tabActive : styles.tab}>
               버닝
             </Text>
@@ -568,7 +665,10 @@ export default function HomeScreen() {
 
         <TouchableOpacity
           style={styles.tabItem}
-          onPress={() => setActiveTab('my')}
+          onPress={() => {
+            setMyInitialTab('reviews');
+            setActiveTab('my');
+          }}
         >
           <View style={activeTab === 'my' ? styles.tabPillActive : styles.tabPill}>
             <Text style={activeTab === 'my' ? styles.tabActive : styles.tab}>
@@ -855,6 +955,191 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
+  notificationBackdrop: {
+    position: 'absolute',
+    inset: 0,
+    backgroundColor: 'transparent',
+    zIndex: 1400,
+  },
+
+  notificationPopup: {
+    position: 'absolute',
+    top: 62,
+    right: 12,
+    width: 320,
+    maxHeight: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    shadowColor: '#111827',
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 30,
+    zIndex: 1500,
+    overflow: 'hidden',
+  },
+
+  notificationHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+
+  notificationTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+  },
+
+  notificationReadAll: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: BRAND_BLUE,
+  },
+
+  notificationList: {
+    maxHeight: 300,
+  },
+
+  notificationListContent: {
+    paddingBottom: 8,
+  },
+
+  notificationEmptyWrap: {
+    paddingHorizontal: 16,
+    paddingVertical: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  notificationEmptyText: {
+    color: '#9CA3AF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  notificationItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+
+  notificationItemUnread: {
+    backgroundColor: '#F8FAFF',
+  },
+
+  notificationItemTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+
+  notificationTypeBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#EEF2FF',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+
+  notificationTypeBadgeText: {
+    color: BRAND_BLUE,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  notificationTime: {
+    color: '#9CA3AF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  notificationTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+
+  notificationItemTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#111827',
+  },
+
+  notificationUnreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+  },
+
+  notificationBody: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#6B7280',
+  },
+
+  noticeModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(17,24,39,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+
+  noticeModalCard: {
+    width: '100%',
+    maxHeight: '72%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 18,
+  },
+
+  noticeModalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 14,
+  },
+
+  noticeModalScroll: {
+    maxHeight: 320,
+  },
+
+  noticeModalContent: {
+    fontSize: 15,
+    lineHeight: 24,
+    color: '#4B5563',
+  },
+
+  noticeModalButton: {
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: BRAND_BLUE,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 18,
+  },
+
+  noticeModalButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+
   loadingOverlay: {
     position: 'absolute',
     inset: 0,
@@ -920,7 +1205,7 @@ const styles = StyleSheet.create({
 
   tabPillActive: {
     minWidth: 72,
-    height: 38,
+    height: 38,   
     paddingHorizontal: 16,
     borderRadius: 19,
     justifyContent: 'center',
@@ -965,227 +1250,5 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: '800',
     marginTop: -2,
-  },
-});
-
-const detailStyles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-
-  headerRow: {
-    paddingHorizontal: 18,
-    paddingTop: 4,
-    paddingBottom: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#111827',
-  },
-
-  closeButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  closeText: {
-    fontSize: 24,
-    color: '#6B7280',
-    marginTop: -2,
-  },
-
-  scroll: {
-    flex: 1,
-  },
-
-  contentContainer: {
-    paddingBottom: 110,
-  },
-
-  imageRow: {
-    paddingHorizontal: 18,
-  },
-
-  mainImage: {
-    width: 250,
-    height: 190,
-    borderRadius: 20,
-    marginRight: 10,
-    backgroundColor: '#E5E7EB',
-  },
-
-  sideImage: {
-    width: 150,
-    height: 190,
-    borderRadius: 20,
-    marginRight: 10,
-    backgroundColor: '#E5E7EB',
-  },
-
-  emptyImageBox: {
-    height: 190,
-    marginHorizontal: 18,
-    borderRadius: 20,
-    backgroundColor: '#E5E7EB',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  emptyImageText: {
-    color: '#6B7280',
-    fontWeight: '700',
-  },
-
-  summaryCard: {
-    marginHorizontal: 18,
-    marginTop: 18,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 18,
-  },
-
-  summaryTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-    gap: 10,
-  },
-
-  summaryBadges: {
-    alignItems: 'flex-end',
-    gap: 8,
-  },
-
-  burningBadge: {
-    backgroundColor: '#F3E8FF',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    alignSelf: 'flex-start',
-  },
-
-  burningBadgeText: {
-    color: '#7C3AED',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-
-  storeName: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 4,
-  },
-
-  storeCategory: {
-    color: '#6B7280',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-
-  pbBadge: {
-    backgroundColor: '#EEF2FF',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    alignSelf: 'flex-start',
-  },
-
-  pbBadgeText: {
-    color: BRAND_BLUE,
-    fontSize: 13,
-    fontWeight: '800',
-  },
-
-  addressText: {
-    color: '#4B5563',
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '500',
-  },
-
-  infoCard: {
-    marginHorizontal: 18,
-    marginTop: 14,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 18,
-  },
-
-  sectionBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#EEF2FF',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    marginBottom: 16,
-  },
-
-  sectionBadgeText: {
-    color: BRAND_BLUE,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-
-  infoRow: {
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-
-  infoLabel: {
-    color: '#6B7280',
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-
-  infoValue: {
-    color: '#111827',
-    fontSize: 18,
-    fontWeight: '700',
-    lineHeight: 26,
-  },
-
-  bottomBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: 18,
-    paddingTop: 12,
-    paddingBottom: 20,
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-
-  bottomButton: {
-    height: 56,
-    borderRadius: 18,
-    backgroundColor: BRAND_BLUE,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  bottomButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '800',
   },
 });

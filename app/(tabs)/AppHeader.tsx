@@ -6,12 +6,14 @@ type AppHeaderProps = {
   pbAmount?: string;
   onPressLogo?: () => void;
   onPressBell?: () => void;
+  unreadCount?: number;
 };
 
 export default function AppHeader({
   pbAmount = '0',
   onPressLogo,
   onPressBell,
+  unreadCount = 0,
 }: AppHeaderProps) {
   return (
     <View style={styles.header}>
@@ -27,7 +29,17 @@ export default function AppHeader({
 
         <TouchableOpacity style={styles.bellButton} onPress={onPressBell}>
           <Text style={styles.bellIcon}>🔔</Text>
-          <View style={styles.redDot} />
+          {unreadCount > 0 ? (
+            unreadCount > 9 ? (
+              <View style={styles.badgeWide}>
+                <Text style={styles.badgeText}>9+</Text>
+              </View>
+            ) : (
+              <View style={styles.redDot}>
+                <Text style={styles.dotText}>{unreadCount}</Text>
+              </View>
+            )
+          ) : null}
         </TouchableOpacity>
       </View>
     </View>
@@ -98,11 +110,39 @@ const styles = StyleSheet.create({
 
   redDot: {
     position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    top: 6,
+    right: 5,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: '#EF4444',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 3,
+  },
+
+  badgeWide: {
+    position: 'absolute',
+    top: 6,
+    right: 4,
+    minWidth: 20,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#EF4444',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+
+  dotText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
   },
 });

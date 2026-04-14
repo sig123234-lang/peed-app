@@ -1,17 +1,17 @@
 import { StatusBar } from 'expo-status-bar';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   Dimensions,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import PagerView from 'react-native-pager-view';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Home from './home';
 
-const { height } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
 const BRAND_BLUE = '#4F6BFF';
 const KAKAO_YELLOW = '#FEE500';
@@ -36,16 +36,21 @@ const slides = [
 ];
 
 export default function IndexScreen() {
-  const pagerRef = useRef<PagerView>(null);
   const [page, setPage] = useState(0);
   const [showLogin, setShowLogin] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   const handleNext = () => {
     if (page < slides.length - 1) {
-      pagerRef.current?.setPage(page + 1);
+      setPage((prev) => prev + 1);
     } else {
       setShowLogin(true);
+    }
+  };
+
+  const handlePrev = () => {
+    if (page > 0) {
+      setPage((prev) => prev - 1);
     }
   };
 
@@ -76,30 +81,31 @@ export default function IndexScreen() {
               style={styles.kakaoButton}
               onPress={() => setIsLoggedIn(true)}
             >
-              <Text style={styles.kakaoButtonText}>
-                카카오톡으로 계속하기
-              </Text>
+              <Text style={styles.kakaoButtonText}>카카오톡으로 계속하기</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.appleButton}
               onPress={() => setIsLoggedIn(true)}
             >
-              <Text style={styles.appleButtonText}>
-                Apple로 계속하기
-              </Text>
+              <Text style={styles.appleButtonText}>Apple로 계속하기</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => setShowLogin(false)}>
+              <Text style={styles.backText}>온보딩으로 돌아가기</Text>
             </TouchableOpacity>
 
             <Text style={styles.termsText}>
               로그인하면 서비스 이용약관 및 개인정보처리방침에{'\n'}
               동의하게 됩니다.
             </Text>
-
           </View>
         </View>
       </SafeAreaView>
     );
   }
+
+  const currentSlide = slides[page];
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -109,28 +115,21 @@ export default function IndexScreen() {
         <Text style={styles.brand}>PEED</Text>
       </View>
 
-      <PagerView
-        ref={pagerRef}
-        style={styles.pager}
-        initialPage={0}
-        scrollEnabled
-        onPageSelected={(e) => setPage(e.nativeEvent.position)}
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
-        {slides.map((slide) => (
-          <View key={slide.id.toString()} style={styles.page}>
-            <View style={styles.heroCard}>
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>
-                  PLAY · EAT · ENTERTAIN · DRINK
-                </Text>
-              </View>
-
-              <Text style={styles.title}>{slide.title}</Text>
-              <Text style={styles.description}>{slide.description}</Text>
+        <View style={styles.page}>
+          <View style={styles.heroCard}>
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>PLAY · EAT · ENTERTAIN · DRINK</Text>
             </View>
+
+            <Text style={styles.title}>{currentSlide.title}</Text>
+            <Text style={styles.description}>{currentSlide.description}</Text>
           </View>
-        ))}
-      </PagerView>
+        </View>
+      </ScrollView>
 
       <View style={styles.bottomArea}>
         <View style={styles.pagination}>
@@ -142,11 +141,21 @@ export default function IndexScreen() {
           ))}
         </View>
 
-        <TouchableOpacity style={styles.primaryButton} onPress={handleNext}>
-          <Text style={styles.primaryButtonText}>
-            {page < slides.length - 1 ? '다음' : 'PEED 시작하기'}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.buttonRow}>
+          {page > 0 ? (
+            <TouchableOpacity style={styles.secondaryButton} onPress={handlePrev}>
+              <Text style={styles.secondaryButtonText}>이전</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.secondaryButtonPlaceholder} />
+          )}
+
+          <TouchableOpacity style={styles.primaryButton} onPress={handleNext}>
+            <Text style={styles.primaryButtonText}>
+              {page < slides.length - 1 ? '다음' : 'PEED 시작하기'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -171,17 +180,19 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  pager: {
-    flex: 1,
+  scrollContent: {
+    flexGrow: 1,
   },
 
   page: {
     flex: 1,
     paddingHorizontal: 20,
     justifyContent: 'center',
+    minHeight: height * 0.72,
   },
 
   heroCard: {
+    width: width - 40,
     backgroundColor: '#FFFFFF',
     borderRadius: 28,
     paddingHorizontal: 24,
@@ -190,6 +201,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    alignSelf: 'center',
   },
 
   badge: {
@@ -245,7 +257,32 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND_BLUE,
   },
 
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  secondaryButton: {
+    flex: 1,
+    height: 56,
+    borderRadius: 18,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  secondaryButtonText: {
+    color: '#111111',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+
+  secondaryButtonPlaceholder: {
+    flex: 1,
+  },
+
   primaryButton: {
+    flex: 2,
     height: 56,
     borderRadius: 18,
     backgroundColor: BRAND_BLUE,
