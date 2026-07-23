@@ -3,7 +3,7 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { routes } from './build/routes.mjs';
+import { routes, runDueDraws } from './build/routes.mjs';
 
 // PEED 독립 실행 서버.
 // 원래는 Vercel(정적 호스팅 + 서버리스 함수)에 올라가던 앱이라, 여기서 그 두 가지를
@@ -192,8 +192,25 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// 경품 자동 추첨 — 발표일이 된 상품을 서버가 스스로 추첨한다.
+// 서버가 꺼져 있던 동안 발표일이 지났어도, 다시 켜지면 곧바로 따라잡는다.
+const DRAW_INTERVAL_MS = 10 * 60 * 1000; // 10분
+async function drawTick() {
+  try {
+    const done = await runDueDraws();
+    for (const r of done) {
+      console.log(`자동 추첨: ${r.name} — 당첨 ${r.winners}명`);
+    }
+  } catch (e) {
+    console.error('자동 추첨 실패:', e?.message || e);
+  }
+}
+
 server.listen(PORT, HOST, () => {
   console.log(`PEED 서버 http://${HOST}:${PORT}  (정적: ${DIST})`);
   console.log(`데이터: ${process.env.PEED_DATA_DIR || path.join(process.env.HOME || '', 'peed-data')}`);
   console.log(`공개주소: ${process.env.PUBLIC_BASE_URL || '(미설정 — 요청 헤더로 추론)'}`);
+  // 기동 직후 한 번 확인하고, 이후 10분마다.
+  drawTick();
+  setInterval(drawTick, DRAW_INTERVAL_MS).unref();
 });

@@ -75,7 +75,7 @@ export default function DmScreen() {
     askNotifyPermission,
   } = useDm();
   const { dmTarget, clearDmTarget, setHideTabBar, viewUser } = useShell();
-  const { startCall, joinCall, activeConvId } = useVoice();
+  const { joinCall, activeConvId } = useVoice();
   const isDesktop = useIsDesktop();
 
   const CALL_MARK = '[VOICE_CALL]';
@@ -326,18 +326,6 @@ export default function DmScreen() {
                 : selected.others[0]?.handle || ''}
             </Text>
           </View>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.callHeaderBtn, activeConvId === selected.id && styles.callHeaderBtnOn]}
-          onPress={() => (activeConvId === selected.id ? undefined : startCall(selected.id))}
-          activeOpacity={0.85}
-          hitSlop={8}
-        >
-          <Ionicons
-            name="call"
-            size={19}
-            color={activeConvId === selected.id ? colors.success : colors.primary}
-          />
         </TouchableOpacity>
       </View>
 
@@ -639,15 +627,6 @@ const styles = StyleSheet.create({
   threadWho: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   threadName: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
   threadHandle: { fontSize: 12.5, fontWeight: '600', color: colors.textSecondary, marginTop: 1 },
-  callHeaderBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  callHeaderBtnOn: { backgroundColor: '#E8FBF3' },
   callCard: {
     alignSelf: 'center',
     flexDirection: 'row',

@@ -48,6 +48,15 @@ export async function getJSON<T>(key: string, fallback: T): Promise<T> {
   }
 }
 
+/** 키가 실제로 저장된 적이 있는지. '값이 비었다'와 '아직 만든 적 없다'를 구분한다. */
+export async function existsKey(key: string): Promise<boolean> {
+  try {
+    return fs.existsSync(safePath(key));
+  } catch {
+    return false;
+  }
+}
+
 export async function putJSON(key: string, data: unknown): Promise<void> {
   const file = safePath(key);
   await serialize(async () => {

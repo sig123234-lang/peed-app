@@ -2613,6 +2613,34 @@ function FinanceView() {
 
 /* ============================================================ raffle draw */
 
+/* 발표일 해석 — 서버(api/_draw.ts)와 같은 규칙. 관리자가 입력한 값이 실제로
+   언제로 잡히는지 폼에서 바로 보여주기 위해 앱 쪽에도 둔다. */
+function parseAnnounceDate(v: any): string | null {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  const pad = (n: string) => n.padStart(2, '0');
+  const today = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+  let y: string | null = null;
+  let mo: string | null = null;
+  let d: string | null = null;
+  let m = s.match(/^(\d{4})\s*[-.\/년]\s*(\d{1,2})\s*[-.\/월]\s*(\d{1,2})\s*일?$/);
+  if (m) [, y, mo, d] = m;
+  if (!y) {
+    m = s.match(/^(\d{1,2})\s*[-.\/월]\s*(\d{1,2})\s*일?$/);
+    if (m) [, mo, d] = m;
+  }
+  if (!mo || !d) return null;
+  const mi = Number(mo);
+  const di = Number(d);
+  if (mi < 1 || mi > 12 || di < 1 || di > 31) return null;
+  if (!y) {
+    const thisYear = today.slice(0, 4);
+    const cand = `${thisYear}-${pad(mo)}-${pad(d)}`;
+    y = cand < today ? String(Number(thisYear) + 1) : thisYear;
+  }
+  return `${y}-${pad(mo)}-${pad(d)}`;
+}
+
 const PRODUCT_CATEGORIES = [
   '전자기기',
   '상품권/기프티콘',
@@ -3549,25 +3577,40 @@ function ProductModal({
           <FormField label="응모 한도" value={String(f.stock ?? '')} onChange={(v) => set('stock', v)} numeric placeholder="100" />
         </View>
         <View style={{ flex: 1 }}>
-          <FormField label="발표일" value={String(f.announcementDate ?? '')} onChange={(v) => set('announcementDate', v)} placeholder="4월 20일" />
+          <FormField
+            label="발표일 (자동 추첨) *"
+            value={String(f.announcementDate ?? '')}
+            onChange={(v) => set('announcementDate', v)}
+            placeholder="2026-08-01"
+          />
         </View>
       </View>
 
-      <Text style={styles.fLabel}>상태</Text>
-      <View style={styles.chipRow}>
-        {[
-          { v: 'active', l: '🟢 진행중 (앱 노출)' },
-          { v: 'ended', l: '마감 (숨김)' },
-        ].map((o) => (
-          <TouchableOpacity
-            key={o.v}
-            style={[styles.stageChip, f.status === o.v && { backgroundColor: colors.primary, borderColor: colors.primary }]}
-            onPress={() => set('status', o.v)}
-          >
-            <Text style={[styles.stageChipText, f.status === o.v && { color: '#fff' }]}>{o.l}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      {/* 상태는 더 이상 손으로 고르지 않는다. 발표일이 되면 서버가 자동으로
+          추첨하고 마감 처리한다. 관리자가 상태를 잘못 눌러 응모가 막히거나,
+          마감된 상품이 계속 노출되던 문제를 없앤다. */}
+      {(() => {
+        const parsed = parseAnnounceDate(f.announcementDate);
+        const bad = !!f.announcementDate && !parsed;
+        return (
+          <View style={[styles.autoNote, bad && styles.autoNoteBad]}>
+            <Ionicons
+              name={bad ? 'alert-circle-outline' : 'time-outline'}
+              size={15}
+              color={bad ? colors.danger : colors.primary}
+            />
+            <Text style={[styles.autoNoteText, bad && { color: colors.danger }]}>
+              {f.drawnAt
+                ? `${f.drawnAt} 추첨 완료`
+                : bad
+                  ? '날짜를 알아볼 수 없어 자동 추첨되지 않습니다. 2026-08-02 또는 8월 2일 형식으로 입력하세요.'
+                  : parsed
+                    ? `${parsed} 에 자동 추첨됩니다. 그때까지 앱에 노출됩니다.`
+                    : '발표일을 입력하면 그날 자동으로 추첨합니다. (예: 2026-08-02)'}
+            </Text>
+          </View>
+        );
+      })()}
 
       {/* 예산 미리보기 */}
       <View style={[styles.card, over && { borderColor: colors.coral, borderWidth: 1 }]}>
@@ -6593,6 +6636,18 @@ const styles = StyleSheet.create({
   funCount: { width: 44, textAlign: 'right', fontSize: 13, fontWeight: '600', color: colors.textPrimary },
   funConv: { width: 44, textAlign: 'right', fontSize: 12, fontWeight: '700', color: colors.textTertiary },
 
+  autoNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.primarySoft,
+    borderRadius: ui.r.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  autoNoteBad: { backgroundColor: colors.coralSoft },
+  autoNoteText: { flex: 1, fontSize: 12, fontWeight: '600', color: colors.primary, lineHeight: 17 },
   errBanner: {
     backgroundColor: colors.coralSoft,
     color: colors.coralDeep,

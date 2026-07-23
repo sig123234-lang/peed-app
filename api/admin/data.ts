@@ -2,7 +2,7 @@ import { requireAdmin } from '../_auth';
 import { notify } from '../_notifs';
 import { recordPbEvent } from '../_pb';
 import { ensureWiped } from '../_reset';
-import { getJSON, putJSON, storeConfigured } from '../_store';
+import { existsKey, getJSON, putJSON, storeConfigured } from '../_store';
 import { withDefaults } from '../_users';
 
 // Generic admin CRUD over R2 JSON collections. One endpoint drives members,
@@ -68,8 +68,16 @@ const fileFor = (name: string) => FILE_OF[name] || `v2/${name}.json`;
 
 async function getCollection(name: string): Promise<any[]> {
   await ensureWiped();
-  const items = await getJSON<any[]>(fileFor(name), []);
-  if ((!items || items.length === 0) && SEEDS[name]) return SEEDS[name];
+  const file = fileFor(name);
+  const items = await getJSON<any[]>(file, []);
+  if (items && items.length) return items;
+  // 예시 데이터는 '아직 한 번도 저장된 적 없는' 컬렉션에만 넣는다.
+  // 비어 있다는 이유만으로 넣으면, 관리자가 전부 지워도 새로고침할 때마다
+  // 예시 데이터가 되살아난다(직원 3명이 계속 다시 생기던 원인).
+  if (SEEDS[name] && !(await existsKey(file))) {
+    await putJSON(file, SEEDS[name]);
+    return SEEDS[name];
+  }
   return items || [];
 }
 
