@@ -1,6 +1,7 @@
 import { addBite, allBites } from './_bites';
 import * as districts from './_districts';
 import * as entries from './_entries';
+import * as games from './_games';
 import * as notifs from './_notifs';
 import * as push from './_push';
 import { recordPbEvent } from './_pb';
@@ -1151,6 +1152,18 @@ export default async function handler(req: any, res: any) {
       return;
     }
     if (action === 'myWins') return await handleMyWins(uid, res);
+    if (action === 'gameStats') {
+      res.status(200).json({ ok: true, stats: await games.stats() });
+      return;
+    }
+    if (action === 'gamePoll') {
+      if (!uid) {
+        res.status(200).json({ ok: true, status: 'idle' });
+        return;
+      }
+      res.status(200).json({ ok: true, ...(await games.poll(uid)) });
+      return;
+    }
     if (action === 'chatAuth') return await handleChatAuth(uid, res);
     if (action === 'chatList') return await handleChatList(uid, res);
     if (action === 'chatPoll') return await handleChatPoll(uid, String(req.query.since || ''), res);
@@ -1212,6 +1225,33 @@ export default async function handler(req: any, res: any) {
     if (action === 'editPost') return await handleEditPost(uid, b, res);
     if (action === 'deletePost') return await handleDeletePost(uid, b, res);
     if (action === 'report') return await handleReport(uid, b, res);
+    if (action === 'gameJoin') {
+      if (!uid) {
+        res.status(401).json({ ok: false, error: 'unauthorized' });
+        return;
+      }
+      const g = String(b?.game || '');
+      if (!['rps', 'quiz', 'lastman'].includes(g)) {
+        res.status(400).json({ ok: false, error: 'bad_game' });
+        return;
+      }
+      res.status(200).json({ ok: true, ...(await games.join(uid, g as any)) });
+      return;
+    }
+    if (action === 'gameMove') {
+      if (!uid) {
+        res.status(401).json({ ok: false, error: 'unauthorized' });
+        return;
+      }
+      const m = await games.move(uid, String(b?.matchId || ''), b?.move);
+      res.status(200).json(m ? { ok: true, match: m } : { ok: false, error: 'no_match' });
+      return;
+    }
+    if (action === 'gameLeave') {
+      if (uid) await games.leave(uid);
+      res.status(200).json({ ok: true });
+      return;
+    }
     if (action === 'pushSubscribe') {
       await push.subscribe(uid, b?.subscription || b, String(req.headers?.['user-agent'] || ''));
       res.status(200).json({ ok: true });
