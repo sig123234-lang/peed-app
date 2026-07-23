@@ -3,9 +3,9 @@ import type { CSSProperties } from 'react';
 
 import { MapMarker } from '@/data/stores';
 
-// 카카오맵 구현(BurningMap.kakao)과 Leaflet 폴백(BurningMap.leaflet)이 함께 쓰는
-// 조각들. 두 지도가 같은 핀·같은 카드로 보여야 폴백이 일어나도 사용자가
-// 화면이 바뀐 걸 눈치채지 못한다.
+// 지도 화면(BurningMap.kakao)과 스위처(BurningMap.web), 네이티브
+// 플레이스홀더(BurningMap.tsx)가 함께 쓰는 조각들 — 공통 props 타입과
+// 핀·카드의 HTML·CSS, 거리 계산.
 
 export type MapBounds = { north: number; south: number; east: number; west: number };
 
@@ -106,21 +106,22 @@ const PIN_CSS =
   // 좌표 지점에 0×0 기준점을 만든다. (Leaflet 은 divIcon 이 이 역할을 하므로
   // .peed-pin 에 position 을 주면 오히려 마커 배치가 깨진다.)
   '.peed-pin-k{position:relative;width:0;height:0}' +
+  // 이름은 점 위에 그냥 글씨로 얹는다. 흰 테두리 말풍선으로 감싸면 상자가
+  // 지도를 가려서, 줌아웃할 때 화면을 뒤덮는 게 바로 그 상자였다. 대신
+  // 흰 외곽선(text-shadow)을 둘러 어떤 배경 위에서도 읽히게 한다.
   '.peed-pin-pill{position:absolute;left:0;top:0;' +
-  'transform:translate(-50%,calc(-100% - 13px));padding:2px 8px;' +
-  'background:#fff;border:1.4px solid #FF6B6B;border-radius:999px;' +
-  'font-size:10.5px;font-weight:800;color:#1A1A2E;white-space:nowrap;' +
-  'box-shadow:0 1px 4px rgba(0,0,0,.2)}' +
-  '.peed-pin-pill--sm{padding:1px 6px;font-size:9.5px;' +
-  'transform:translate(-50%,calc(-100% - 11px))}' +
-  '.peed-pin-pb{margin-left:4px;color:#4F6BFF;font-weight:900}' +
+  'transform:translate(-50%,calc(-100% - 11px));' +
+  'font-size:11px;font-weight:800;color:#1A1A2E;white-space:nowrap;' +
+  'text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 3px #fff,0 0 3px #fff}' +
+  '.peed-pin-pill--sm{font-size:10px;transform:translate(-50%,calc(-100% - 9px))}' +
+  '.peed-pin-pb{margin-left:3px;color:#FF5A5A;font-weight:900}' +
   '.peed-pin:hover{z-index:10000 !important}' +
   '.peed-pin-dot{position:absolute;left:0;top:0;' +
   'transform:translate(-50%,-50%);width:14px;height:14px;' +
   'border-radius:50%;background:#FF6B6B;border:2.5px solid #fff;' +
   'box-shadow:0 1px 4px rgba(0,0,0,.35)}' +
-  // 넓게 볼 때는 이름을 숨기고 점만 남긴다. 말풍선은 줌아웃해도 같은 크기라
-  // 지도를 축소할수록 오히려 화면을 뒤덮는다.
+  // 도(道) 단위까지 축소했을 때만 이름을 감춘다. 매장이 늘면 그 배율에서는
+  // 이름이 서로 겹쳐 읽히지도 않는다. 평소 보는 배율에서는 늘 보인다.
   '.peed-pin--far .peed-pin-pill{display:none}' +
   // 카드 본문 — 한 줄짜리 가로 카드. 지도가 작아서 세로로 쌓으면 답답하다.
   '.peed-card{display:flex;align-items:center;gap:9px;width:206px;padding:8px 10px;' +

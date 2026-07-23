@@ -149,9 +149,10 @@ export function BurningMapKakao({
     }
   };
 
-  // 이 레벨보다 넓게 보고 있으면 이름을 감추고 점만 남긴다. (카카오는 숫자가
-  // 클수록 넓은 범위)
-  const LABEL_MAX_LEVEL = 5;
+  // 이 레벨보다 넓게 보고 있을 때만 이름을 감춘다. 10 은 도(道)가 통째로
+  // 들어오는 배율이라, 실제로 매장을 고르는 배율에서는 이름이 늘 보인다.
+  // (카카오는 숫자가 클수록 넓은 범위)
+  const LABEL_MAX_LEVEL = 10;
 
   const syncPinLabels = () => {
     const map = mapRef.current;
