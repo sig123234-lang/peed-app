@@ -5,6 +5,7 @@ import {
   Alert,
   Image,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,16 +13,30 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { GameHub } from '@/components/game/GameHub';
+import { HomeFeed } from '@/components/feed/HomeFeed';
+import { StoreDetailScreen } from '@/components/store/StoreDetailScreen';
+import { useDm } from '@/context/dm';
+import { usePb } from '@/context/pb';
+import { useReservations } from '@/context/reservations';
+import { useShell } from '@/context/shell';
+import { useIsDesktop } from '@/hooks/use-is-desktop';
 import AppHeader from './AppHeader';
 import BurningScreen from './burning';
+import DmScreen from './dm';
 import MyScreen from './my';
 import PeedScreen from './peed';
-import ReviewScreen from './review';
+import PlayScreen from './play';
 import StoreDetail from './storeDetail';
+import SettingsScreen from '../settings';
 
 const BRAND_BLUE = '#4F6BFF';
-const API_BASE_URL = 'http://172.30.1.65:4000';
+// 하단 탭바가 차지하는 높이 — 콘텐츠가 그 위로 올라오게 예약.
+const TAB_BAR_HEIGHT = 56;
 
 type StoreData = {
   id: string;
@@ -138,11 +153,57 @@ function StoreCard({
   );
 }
 
+// 하단 탭 버튼 — 아이콘 + 작은 라벨.
+function NavTab({
+  icon,
+  label,
+  active,
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.navTab} onPress={onPress} activeOpacity={0.6}>
+      <View style={styles.navIconWrap}>
+        <Ionicons
+          name={(active ? icon : `${icon}-outline`) as any}
+          size={20}
+          color={active ? BRAND_BLUE : '#9CA3AF'}
+        />
+      </View>
+      <Text style={[styles.navLabel, active && styles.navLabelActive]} numberOfLines={1}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function HomeScreen() {
-  const [activeTab, setActiveTab] = useState<'home' | 'burning' | 'peed' | 'my'>('home');
+  const {
+    tab: activeTab,
+    setTab: setActiveTab,
+    showReview,
+    setShowReview,
+    detailStore,
+    closeStoreDetail,
+    hideTabBar,
+  } = useShell();
+  const { openReserve } = useReservations();
+  const { totalUnread: dmUnread } = useDm();
+  const isDesktop = useIsDesktop();
+  const insets = useSafeAreaInsets();
+  // 홈화면에 설치된 스탠드얼론 PWA는 화면이 끝까지 차서(edge-to-edge) 안드로이드
+  // 제스처바에 하단바가 붙는다. 세이프에어리어가 0으로 잡혀도 최소 여백을 확보.
+  const isStandalone =
+    typeof window !== 'undefined' &&
+    (window.matchMedia?.('(display-mode: standalone)').matches ||
+      (window.navigator as any)?.standalone === true);
+  // 제스처바를 피할 최소 여백은 확보하되 상한(28)을 둬서 너무 커지지 않게.
+  const bottomInset = Math.min(Math.max(insets.bottom, isStandalone ? 14 : 0), 28);
   const [myInitialTab, setMyInitialTab] = useState<MyTabType>('reviews');
-  const [showReview, setShowReview] = useState(false);
-  const [selectedStore, setSelectedStore] = useState<StoreData | null>(null);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
 
   const [noticeModalVisible, setNoticeModalVisible] = useState(false);
@@ -151,117 +212,64 @@ export default function HomeScreen() {
     content: string;
   } | null>(null);
 
-  const [homeData, setHomeData] = useState<HomeData>({
-    notices: [],
-    burningStores: [],
-    featuredPrizes: [],
-    latestPrizes: [],
-  });
+  // 실 사용 전환 — 데모 알림 제거. 실제 활동이 생기면 채워진다.
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
-    {
-      id: 'n1',
-      type: '공지',
-      title: 'PEED 오픈 안내',
-      body: '피드 서비스가 정식 오픈되었습니다. 공지를 확인해 보세요.',
-      time: '방금 전',
-      unread: true,
-      noticeData: {
-        title: 'PEED 오픈 안내',
-        content:
-          '피드 서비스가 정식 오픈되었습니다. 버닝 매장 방문 후 리뷰를 남기고 PB를 받아보세요.',
-      },
-    },
-    {
-      id: 'n2',
-      type: '경품',
-      title: '새 경품이 추가되었어요',
-      body: '닌텐도 스위치 OLED 응모가 시작되었어요.',
-      time: '10분 전',
-      unread: true,
-    },
-    {
-      id: 'n3',
-      type: '당첨',
-      title: '당첨 결과가 도착했어요',
-      body: '응모한 경품의 당첨 여부를 확인해 보세요.',
-      time: '1시간 전',
-      unread: true,
-    },
-    {
-      id: 'n4',
-      type: '버닝',
-      title: '새 버닝 매장이 추가되었어요',
-      body: '지금 추가 PB를 받을 수 있는 매장이 열렸어요.',
-      time: '2시간 전',
-      unread: false,
-    },
-    {
-      id: 'n5',
-      type: 'PB',
-      title: 'PB가 적립되었어요',
-      body: '리뷰 인증 완료로 10PB가 적립되었어요.',
-      time: '어제',
-      unread: false,
-    },
-  ]);
-
-  const [loadingHome, setLoadingHome] = useState(true);
   const [openingStore, setOpeningStore] = useState(false);
-  const [homeError, setHomeError] = useState('');
 
-  const featuredPrize = useMemo(() => {
-    if (homeData.featuredPrizes.length > 0) return homeData.featuredPrizes[0];
-    if (homeData.latestPrizes.length > 0) return homeData.latestPrizes[0];
-    return null;
-  }, [homeData]);
-
-  const headerPbAmount = useMemo(() => {
-    if (activeTab === 'my') return '128';
-    if (activeTab === 'peed') return '48';
-    if (activeTab === 'burning') return '32';
-    return '128';
-  }, [activeTab]);
+  // 헤더 PB = 실제 보유 잔액(공유 컨텍스트).
+  const { pb } = usePb();
+  const headerPbAmount = useMemo(
+    () => pb.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','),
+    [pb]
+  );
 
   const unreadAlarmCount = useMemo(
     () => notifications.filter((item) => item.unread).length,
     [notifications]
   );
 
-  const fetchHomeData = useCallback(async () => {
-    try {
-      setLoadingHome(true);
-      setHomeError('');
-
-      const response = await fetch(`${API_BASE_URL}/app/home`);
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data?.message || '홈 데이터를 불러오지 못했습니다.');
-      }
-
-      setHomeData({
-        notices: Array.isArray(data?.home?.notices) ? data.home.notices : [],
-        burningStores: Array.isArray(data?.home?.burningStores) ? data.home.burningStores : [],
-        featuredPrizes: Array.isArray(data?.home?.featuredPrizes) ? data.home.featuredPrizes : [],
-        latestPrizes: Array.isArray(data?.home?.latestPrizes) ? data.home.latestPrizes : [],
-      });
-    } catch (error: any) {
-      setHomeError(error?.message || '홈 데이터를 불러오지 못했습니다.');
-    } finally {
-      setLoadingHome(false);
-    }
-  }, []);
-
+  // 서버 알림 로드 + 15초 폴링(팔로우/댓글/예약 등 이벤트로 서버가 생성).
   useEffect(() => {
-    fetchHomeData();
-  }, [fetchHomeData]);
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const rel = (ts: number) => {
+      const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+      if (s < 60) return '방금';
+      const m = Math.floor(s / 60);
+      if (m < 60) return `${m}분 전`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return `${h}시간 전`;
+      const d = Math.floor(h / 24);
+      return d === 1 ? '어제' : `${d}일 전`;
+    };
+    const load = () =>
+      fetch('/api/public?action=notifs', { credentials: 'include' })
+        .then((r) => r.json())
+        .then((d) => {
+          if (Array.isArray(d?.notifs)) {
+            setNotifications(
+              d.notifs.map((n: any) => ({
+                id: n.id,
+                type: n.type,
+                title: n.title,
+                body: n.body,
+                time: rel(Number(n.ts) || Date.now()),
+                unread: !n.read,
+              }))
+            );
+          }
+        })
+        .catch(() => {});
+    load();
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
+  }, []);
 
   const goHome = () => {
     setActiveTab('home');
     setMyInitialTab('reviews');
     setShowReview(false);
-    setSelectedStore(null);
+    closeStoreDetail();
     setIsNotificationOpen(false);
   };
 
@@ -276,6 +284,11 @@ export default function HomeScreen() {
         unread: false,
       }))
     );
+    if (Platform.OS === 'web') {
+      fetch('/api/public?action=notifsRead', { method: 'POST', credentials: 'include' }).catch(
+        () => {}
+      );
+    }
   };
 
   const removeNotification = (id: string) => {
@@ -330,180 +343,80 @@ export default function HomeScreen() {
     }
   };
 
-  const openStore = async (store: StoreData) => {
-    try {
-      setOpeningStore(true);
-
-      const response = await fetch(`${API_BASE_URL}/app/stores/${store.id}`);
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data?.message || '매장 정보를 불러오지 못했습니다.');
-      }
-
-      setSelectedStore(data.store);
-      setIsNotificationOpen(false);
-    } catch (error: any) {
-      Alert.alert('오류', error?.message || '매장 정보를 불러오지 못했습니다.');
-    } finally {
-      setOpeningStore(false);
-    }
-  };
-
   const renderContent = () => {
     if (activeTab === 'burning') {
-      return (
-        <BurningScreen
-          onOpenStore={() => {
-            if (homeData.burningStores.length === 0) {
-              Alert.alert('안내', '버닝 매장이 없습니다.');
-              return;
-            }
-            openStore(homeData.burningStores[0]);
-          }}
-          onPressReview={() => setShowReview(true)}
-        />
-      );
+      return <BurningScreen onPressReview={() => setShowReview(true)} />;
     }
 
     if (activeTab === 'peed') {
-      return <PeedScreen />;
+      // 데스크탑은 사이드바로 상위 이동하므로 경품 화면을 그대로. 모바일만
+      // 하단 탭 제약 때문에 [경품·게임] 세그먼트 허브로 묶는다.
+      return isDesktop ? <PeedScreen /> : <PlayScreen />;
+    }
+
+    if (activeTab === 'game') {
+      // 데스크탑 사이드바 전용 진입점(모바일은 PB 탭 안 게임 서브탭 사용).
+      return <GameHub />;
     }
 
     if (activeTab === 'my') {
       return <MyScreen initialTab={myInitialTab} />;
     }
 
-    if (loadingHome) {
-      return (
-        <View style={styles.placeholderWrap}>
-          <ActivityIndicator size="large" color={BRAND_BLUE} />
-          <Text style={[styles.placeholderDesc, { marginTop: 12 }]}>
-            홈 데이터를 불러오는 중...
-          </Text>
-        </View>
-      );
+    if (activeTab === 'settings') {
+      return <SettingsScreen />;
     }
 
-    if (homeError) {
-      return (
-        <View style={styles.placeholderWrap}>
-          <Text style={styles.placeholderTitle}>홈 로딩 실패</Text>
-          <Text style={styles.placeholderDesc}>{homeError}</Text>
-
-          <TouchableOpacity style={styles.heroButton} onPress={fetchHomeData}>
-            <Text style={styles.heroButtonText}>다시 불러오기</Text>
-          </TouchableOpacity>
-        </View>
-      );
+    if (activeTab === 'dm') {
+      return <DmScreen />;
     }
 
-    return (
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.contentContainer}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.heroCard}>
-          <Text style={styles.heroEyebrow}>TODAY&apos;S REWARD</Text>
-          <Text style={styles.heroTitle}>
-            지금 바로 응모 가능한{'\n'}
-            오늘의 경품
-          </Text>
-          <Text style={styles.heroDesc}>
-            리뷰 남기고 PB를 모아 바로 응모해 보세요.
-          </Text>
-
-          <View style={styles.heroRewardCard}>
-            <View style={{ flex: 1, paddingRight: 12 }}>
-              <Text style={styles.heroRewardTitle}>
-                {featuredPrize?.title || '현재 진행 중인 경품이 없습니다'}
-              </Text>
-              <Text style={styles.heroRewardSubtitle}>
-                {featuredPrize
-                  ? `${featuredPrize.requiredPb ?? 0}PB로 응모 가능`
-                  : '어드민에서 경품을 등록하면 여기에 표시됩니다'}
-              </Text>
-            </View>
-
-            <View style={styles.heroPbCircle}>
-              <Text style={styles.heroPbCircleText}>
-                {featuredPrize ? `${featuredPrize.requiredPb ?? 0}PB` : '-'}
-              </Text>
-            </View>
-          </View>
-
-          <TouchableOpacity
-            style={styles.heroButton}
-            onPress={() => setActiveTab('peed')}
-          >
-            <Text style={styles.heroButtonText}>응모 가능한 경품 보기</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionEyebrow}>BURNING STORE</Text>
-          <Text style={styles.sectionTitleLarge}>버닝 매장</Text>
-          <Text style={styles.sectionDesc}>
-            추가 PB를 받을 수 있는 매장을 확인해 보세요.
-          </Text>
-
-          {homeData.burningStores.length > 0 ? (
-            homeData.burningStores.map((store, index) => (
-              <View
-                key={store.id}
-                style={{ marginBottom: index === homeData.burningStores.length - 1 ? 0 : 12 }}
-              >
-                <StoreCard store={store} onPress={() => openStore(store)} />
-              </View>
-            ))
-          ) : (
-            <View style={styles.emptyStoresCard}>
-              <Text style={styles.emptyStoresTitle}>버닝 매장이 아직 없습니다</Text>
-              <Text style={styles.emptyStoresDesc}>
-                어드민에서 버닝 매장을 등록하면 이곳에 자동으로 표시됩니다.
-              </Text>
-            </View>
-          )}
-
-          <TouchableOpacity
-            style={styles.sectionBottomButton}
-            onPress={() => setActiveTab('burning')}
-          >
-            <Text style={styles.sectionBottomButtonText}>버닝 매장 보러가기</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={{ height: 110 }} />
-      </ScrollView>
-    );
+    // Home tab → the 먹스타그램 social feed. Independent of the backend homeData
+    // fetch; the feed comes from the shared FeedProvider.
+    return <HomeFeed />;
   };
 
-  if (showReview) {
-    return <ReviewScreen onBack={() => setShowReview(false)} />;
-  }
+  // Review now renders as a blurred popup at the root (see _layout), so the feed
+  // behind it stays mounted and blurred instead of being replaced.
 
-  if (selectedStore) {
+  if (detailStore) {
     return (
-      <StoreDetail
-        onClose={() => setSelectedStore(null)}
-        store={selectedStore}
+      <StoreDetailScreen
+        store={detailStore}
+        onClose={closeStoreDetail}
+        onReserve={() => openReserve(detailStore)}
+        onReview={() => setShowReview(true)}
       />
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="dark" />
 
       <AppHeader
         pbAmount={headerPbAmount}
         onPressLogo={goHome}
         onPressBell={toggleNotifications}
+        onPressDm={() => setActiveTab('dm')}
         unreadCount={unreadAlarmCount}
+        dmUnread={dmUnread}
       />
 
-      {renderContent()}
+      {/* 탭 콘텐츠 — 모바일에선 (탭바 높이 + 홈 인디케이터 여백)만큼 공간 예약해
+          콘텐츠가 안 가려지게. 탭바가 숨겨질 땐(대화방 등) 인디케이터 여백만 확보. */}
+      <View
+        style={{
+          flex: 1,
+          paddingBottom: isDesktop
+            ? 0
+            : hideTabBar
+              ? bottomInset
+              : TAB_BAR_HEIGHT + bottomInset,
+        }}
+      >
+        {renderContent()}
+      </View>
 
       {isNotificationOpen ? (
         <>
@@ -619,64 +532,65 @@ export default function HomeScreen() {
         </View>
       ) : null}
 
-      <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={styles.tabItem}
+      {!isDesktop && !hideTabBar && (
+      <View style={[styles.tabBar, { paddingBottom: 4 + bottomInset }]}>
+        <NavTab
+          icon="home"
+          label="홈"
+          active={activeTab === 'home'}
           onPress={() => {
             setActiveTab('home');
             setMyInitialTab('reviews');
           }}
-        >
-          <View style={activeTab === 'home' ? styles.tabPillActive : styles.tabPill}>
-            <Text style={activeTab === 'home' ? styles.tabActive : styles.tab}>
-              홈
-            </Text>
-          </View>
-        </TouchableOpacity>
+        />
+        <NavTab icon="flame" label="버닝" active={activeTab === 'burning'} onPress={() => setActiveTab('burning')} />
 
-        <TouchableOpacity
-          style={styles.tabItem}
-          onPress={() => setActiveTab('burning')}
-        >
-          <View style={activeTab === 'burning' ? styles.tabPillActive : styles.tabPill}>
-            <Text style={activeTab === 'burning' ? styles.tabActive : styles.tab}>
-              버닝
-            </Text>
-          </View>
-        </TouchableOpacity>
+        {/* 가운데 리뷰 작성 — 라이즈드 그라데이션 버튼 + 라벨. 라벨을 붙여
+            나머지 탭과 baseline이 맞아 붕 뜬 느낌이 사라진다. */}
+        {/* 가운데 리뷰 — 바 안에 앉는 꽉 찬 그라데이션 스퀘어클(띄우지 않음) */}
+        <View style={styles.fabCol}>
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={() => setShowReview(true)}
+            activeOpacity={0.85}
+          >
+            <LinearGradient
+              colors={['#7C5CFF', '#4F6BFF']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.fabGradient}
+            >
+              <Ionicons name="add" size={20} color="#FFFFFF" />
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
 
+        {/* PB 탭 — 아이콘은 'P' 코인(활성 시 브랜드색으로 채움), 라벨은 PB */}
         <TouchableOpacity
-          style={styles.fab}
-          onPress={() => setShowReview(true)}
-        >
-          <Text style={styles.fabText}>+</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.tabItem}
+          style={styles.navTab}
           onPress={() => setActiveTab('peed')}
+          activeOpacity={0.6}
         >
-          <View style={activeTab === 'peed' ? styles.tabPillActive : styles.tabPill}>
-            <Text style={activeTab === 'peed' ? styles.tabActive : styles.tab}>
-              피드
-            </Text>
+          <View style={styles.navIconWrap}>
+            <View style={[styles.pbCoin, activeTab === 'peed' && styles.pbCoinActive]}>
+              <Text style={[styles.pbCoinText, activeTab === 'peed' && styles.pbCoinTextActive]}>
+                P
+              </Text>
+            </View>
           </View>
+          <Text style={[styles.navLabel, activeTab === 'peed' && styles.navLabelActive]}>PB</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.tabItem}
+        <NavTab
+          icon="person"
+          label="마이"
+          active={activeTab === 'my'}
           onPress={() => {
             setMyInitialTab('reviews');
             setActiveTab('my');
           }}
-        >
-          <View style={activeTab === 'my' ? styles.tabPillActive : styles.tabPill}>
-            <Text style={activeTab === 'my' ? styles.tabActive : styles.tab}>
-              마이
-            </Text>
-          </View>
-        </TouchableOpacity>
+        />
       </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -1170,85 +1084,98 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    height: 85,
+    paddingTop: 6,
     flexDirection: 'row',
     justifyContent: 'space-around',
-    alignItems: 'center',
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
+    alignItems: 'flex-end',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     backgroundColor: '#FFFFFF',
-    shadowColor: '#111827',
+    shadowColor: '#0B1020',
     shadowOpacity: 0.08,
-    shadowRadius: 14,
+    shadowRadius: 16,
     shadowOffset: { width: 0, height: -4 },
     borderTopWidth: 1,
-    borderColor: '#EEF2F7',
+    borderColor: '#EEF1F7',
+    overflow: 'visible',
     zIndex: 999,
-    elevation: 999,
+    elevation: 20,
   },
 
-  tabItem: {
+  navTab: {
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 4,
+    // 아이콘+라벨 묶음을 살짝 내려서 가운데 플러스 버튼 높이에 맞춤
+    transform: [{ translateY: 6 }],
   },
 
-  tabPill: {
-    minWidth: 72,
-    height: 38,
-    paddingHorizontal: 16,
-    borderRadius: 19,
-    justifyContent: 'center',
+  navIconWrap: {
+    height: 24,
     alignItems: 'center',
-    backgroundColor: 'transparent',
-  },
-
-  tabPillActive: {
-    minWidth: 72,
-    height: 38,   
-    paddingHorizontal: 16,
-    borderRadius: 19,
     justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#EEF2FF',
   },
 
-  tab: {
-    fontSize: 15,
+  navLabel: {
+    fontSize: 11,
+    lineHeight: 14,
     color: '#9CA3AF',
     fontWeight: '700',
+    letterSpacing: -0.2,
   },
 
-  tabActive: {
-    fontSize: 15,
+  navLabelActive: {
     color: BRAND_BLUE,
     fontWeight: '800',
   },
 
-  fab: {
-    position: 'absolute',
-    top: -28,
-    alignSelf: 'center',
-    width: 66,
-    height: 66,
-    borderRadius: 33,
-    backgroundColor: BRAND_BLUE,
-    justifyContent: 'center',
+  // 'P' 코인 — 아이콘과 동일한 24px. 비활성: 회색 테두리, 활성: 브랜드색 채움.
+  pbCoin: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#9CA3AF',
     alignItems: 'center',
-    shadowColor: BRAND_BLUE,
-    shadowOpacity: 0.28,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 1000,
-    zIndex: 1000,
-    borderWidth: 4,
-    borderColor: '#F7F8FA',
+    justifyContent: 'center',
+  },
+  pbCoinActive: {
+    backgroundColor: BRAND_BLUE,
+    borderColor: BRAND_BLUE,
+  },
+  pbCoinText: {
+    fontSize: 10.5,
+    lineHeight: 12,
+    fontWeight: '900',
+    color: '#9CA3AF',
+    includeFontPadding: false,
+    textAlign: 'center',
+  },
+  pbCoinTextActive: {
+    color: '#FFFFFF',
   },
 
-  fabText: {
-    color: '#FFFFFF',
-    fontSize: 32,
-    fontWeight: '800',
-    marginTop: -2,
+  // 가운데 리뷰 버튼 열 — 라벨 없이 버튼만. 바 안에 앉는 꽉 찬 스퀘어클.
+  fabCol: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+
+  fab: {
+    borderRadius: 13,
+    shadowColor: BRAND_BLUE,
+    shadowOpacity: 0.32,
+    shadowRadius: 9,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 10,
+  },
+
+  fabGradient: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

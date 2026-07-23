@@ -1,48 +1,94 @@
-import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    Dimensions,
-    FlatList,
-    Image,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Image,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const BRAND_BLUE = '#4F6BFF';
-const { width } = Dimensions.get('window');
-const GRID_GAP = 4;
-const GRID_ITEM_SIZE = (width - 36 - GRID_GAP * 2) / 3;
+import { AvatarCropper } from '@/components/ui/AvatarCropper';
 
-type TabType = 'reviews' | 'entries' | 'wins';
+import { STAMP_BOARD, useFeed, won } from '@/context/feed';
+import { usePb } from '@/context/pb';
+import { useReservations } from '@/context/reservations';
+import { useShell } from '@/context/shell';
+import { APP_WIDTH, colors, radius, shadow, spacing } from '@/theme';
+
+const width = APP_WIDTH;
+const GRID_GAP = 3;
+const GRID_ITEM = (width - spacing.lg * 2 - GRID_GAP * 2) / 3;
+
+const comma = (n: number) => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+// 프로필 사진을 정사각 size로 압축(JPEG)해서 로컬 저장 한도 안에 들어오게 한다.
+// 웹은 canvas로 리사이즈, 그 외(native)는 원본 URI 그대로.
+function downscaleAvatar(uri: string, size = 512): Promise<string> {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+      resolve(uri);
+      return;
+    }
+    try {
+      const el = new (window as any).Image();
+      el.crossOrigin = 'anonymous';
+      el.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(uri);
+          const s = Math.min(el.width, el.height) || size;
+          const sx = (el.width - s) / 2;
+          const sy = (el.height - s) / 2;
+          ctx.drawImage(el, sx, sy, s, s, 0, 0, size, size);
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        } catch {
+          resolve(uri);
+        }
+      };
+      el.onerror = () => resolve(uri);
+      el.src = uri;
+    } catch {
+      resolve(uri);
+    }
+  });
+}
+
+type TabType = 'reviews' | 'reservations' | 'entries' | 'wins';
 
 type MyScreenProps = {
   initialTab?: TabType;
 };
 
-type ReviewPost = {
-  id: string;
-  author: string;
-  date: string;
-  earnedPb: number;
-  views: number;
-  savedCount: number;
-  storeName: string;
-  storeCategory: string;
-  storeAddress: string;
-  isBurning: boolean;
-  summary: string;
-  content: string;
-  peopleCount: string;
-  totalPrice: string;
-  menu: string;
-  platform: string;
+// Unified profile post — both live feed posts and historical reviews render as
+// this in the grid + detail modal.
+type GridPost = {
+  key: string;
   images: any[];
+  isBurning: boolean;
+  store: string;
+  category: string;
+  date: string;
+  rating?: number;
+  caption: string;
+  earnedPb: number;
+  people: string;
+  price: string;
+  menu?: string;
+  platform?: string;
+  address?: string;
+  isPrivate?: boolean;
 };
 
 type EntryItem = {
@@ -62,318 +108,342 @@ type WinItem = {
   status: '수령전' | '배송중' | '수령완료';
 };
 
-const reviewPosts: ReviewPost[] = [
-  {
-    id: 'review-1',
-    author: '김승현',
-    date: '2026.04.08',
-    earnedPb: 10,
-    views: 128,
-    savedCount: 14,
-    storeName: '샤월의주방',
-    storeCategory: '요리주점',
-    storeAddress: '서울 마포구 와우산로21길 19 2층',
-    isBurning: true,
-    summary: '분위기 좋고 음식도 깔끔해서 만족스러웠어요.',
-    content:
-      '매장 분위기가 정말 좋았고 하이볼이랑 파스타 조합이 잘 어울렸어요. 사진도 예쁘게 나와서 재방문하고 싶은 곳이었어요.',
-    peopleCount: '2명',
-    totalPrice: '42,000원',
-    menu: '파스타, 하이볼 2잔',
-    platform: '네이버',
-    images: [
-      require('../../assets/images/review1.jpg'),
-      require('../../assets/images/review2.jpg'),
-      require('../../assets/images/review3.jpg'),
-      require('../../assets/images/review4.jpg'),
-    ],
-  },
-  {
-    id: 'review-2',
-    author: '김승현',
-    date: '2026.04.04',
-    earnedPb: 10,
-    views: 96,
-    savedCount: 8,
-    storeName: '담벗',
-    storeCategory: '한식주점',
-    storeAddress: '서울 마포구 어울마당로 54 1층',
-    isBurning: true,
-    summary: '조용하게 술 한잔하기 좋은 곳이었어요.',
-    content:
-      '테이블 간격도 괜찮고 음식도 무난하게 맛있었어요. 친구랑 가볍게 얘기하면서 시간 보내기 좋았어요.',
-    peopleCount: '2명',
-    totalPrice: '38,000원',
-    menu: '전, 막걸리, 사이드',
-    platform: '카카오맵',
-    images: [require('../../assets/images/review2.jpg')],
-  },
-  {
-    id: 'review-3',
-    author: '김승현',
-    date: '2026.03.28',
-    earnedPb: 5,
-    views: 77,
-    savedCount: 5,
-    storeName: '연남 파스타 바',
-    storeCategory: '양식',
-    storeAddress: '서울 마포구 동교로38길 12',
-    isBurning: false,
-    summary: '파스타 맛이 진하고 분위기가 좋았어요.',
-    content:
-      '연남동 분위기랑 잘 어울리는 매장이었고 사진 찍기도 좋았어요. 데이트 코스로도 괜찮을 것 같아요.',
-    peopleCount: '2명',
-    totalPrice: '48,000원',
-    menu: '파스타 2종, 에이드',
-    platform: '구글',
-    images: [require('../../assets/images/review3.jpg')],
-  },
-  {
-    id: 'review-4',
-    author: '김승현',
-    date: '2026.03.21',
-    earnedPb: 5,
-    views: 51,
-    savedCount: 2,
-    storeName: '상수 하이볼클럽',
-    storeCategory: '바 · 펍',
-    storeAddress: '서울 마포구 독막로18길 7',
-    isBurning: false,
-    summary: '하이볼 종류가 다양하고 분위기가 좋았어요.',
-    content:
-      '저녁에 가볍게 한 잔 하기 좋은 느낌이었고 조명도 예뻐서 전체적으로 만족했어요.',
-    peopleCount: '2명',
-    totalPrice: '36,000원',
-    menu: '하이볼 2잔, 안주',
-    platform: '네이버',
-    images: [require('../../assets/images/review4.jpg')],
-  },
-  {
-    id: 'review-5',
-    author: '김승현',
-    date: '2026.03.17',
-    earnedPb: 5,
-    views: 34,
-    savedCount: 1,
-    storeName: '브런치하우스',
-    storeCategory: '브런치 카페',
-    storeAddress: '서울 마포구 연남동 101-22',
-    isBurning: false,
-    summary: '낮에 가볍게 방문하기 좋았어요.',
-    content: '브런치 메뉴 구성이 무난하고 매장이 밝아서 사진 찍기 좋았어요.',
-    peopleCount: '2명',
-    totalPrice: '29,000원',
-    menu: '브런치 플레이트, 커피',
-    platform: '네이버',
-    images: [require('../../assets/images/review1.jpg')],
-  },
-  {
-    id: 'review-6',
-    author: '김승현',
-    date: '2026.03.11',
-    earnedPb: 5,
-    views: 44,
-    savedCount: 3,
-    storeName: '연희 디저트룸',
-    storeCategory: '디저트 카페',
-    storeAddress: '서울 서대문구 연희동 45-8',
-    isBurning: false,
-    summary: '디저트 비주얼이 예쁘고 조용했어요.',
-    content:
-      '전체적으로 깔끔하고 조용한 분위기라 이야기 나누기 좋았어요.',
-    peopleCount: '2명',
-    totalPrice: '21,000원',
-    menu: '케이크, 커피',
-    platform: '구글',
-    images: [require('../../assets/images/review2.jpg')],
-  },
-];
+// 실 사용 전환 — 내 게시물은 서버(myPosts)에서만 온다. 데모 리뷰 제거.
 
-const entryItems: EntryItem[] = [
-  {
-    id: 'entry-1',
-    title: '아이폰 17 PRO',
-    image: require('../../assets/images/iphone17pro.jpg'),
-    myCount: 29,
-    announcementDate: '2026.04.20',
-    status: '응모중',
-  },
-  {
-    id: 'entry-2',
-    title: '프리미엄 호텔 상품권 10만원',
-    image: require('../../assets/images/hotel-voucher.png'),
-    myCount: 6,
-    announcementDate: '2026.04.14',
-    status: '응모중',
-  },
-];
+// 응모/당첨 내역 — 실제 응모가 생기면 서버에서 채워질 자리(현재 비어있음).
+// 당첨 내역 — 추첨은 관리자가 진행. 소비자 당첨 데이터가 생기면 채워질 자리.
+const winItems: WinItem[] = [];
 
-const winItems: WinItem[] = [
-  {
-    id: 'win-1',
-    title: '스타벅스 기프티콘',
-    image: require('../../assets/images/hotel-voucher.png'),
-    wonDate: '2026.03.02',
-    status: '수령전',
-  },
-  {
-    id: 'win-2',
-    title: '아이폰 17 PRO',
-    image: require('../../assets/images/iphone17pro.jpg'),
-    wonDate: '2026.03.05',
-    status: '배송중',
-  },
-  {
-    id: 'win-3',
-    title: '프리미엄 호텔 상품권',
-    image: require('../../assets/images/hotel-voucher.png'),
-    wonDate: '2026.03.10',
-    status: '수령완료',
-  },
+const TABS: { key: TabType; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'reviews', label: '내 피드', icon: 'grid' },
+  { key: 'reservations', label: '예약', icon: 'calendar-outline' },
+  { key: 'entries', label: '응모중', icon: 'ticket-outline' },
+  { key: 'wins', label: '당첨', icon: 'trophy-outline' },
 ];
 
 export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
-  const router = useRouter();
+  const { setTab, openOverlay, dropOverlay, openFollowList } = useShell();
+  const { pb } = usePb();
+  const {
+    myPosts,
+    me,
+    stamps,
+    profileAvatar,
+    setProfileAvatar,
+    editPost,
+    deletePost,
+    followCounts,
+    updateMe,
+    refreshMyPosts,
+    refreshFeed,
+  } = useFeed();
+  const { reservations, cancel, markVisited } = useReservations();
+
+  // 팔로워/팔로잉 = 서버 팔로우 그래프 기준.
+  const followingCount = followCounts.following;
+  const followerCount = followCounts.followers;
+
+  // 응모중 경품 = 서버의 실제 응모 내역(내 응모 수 > 0).
+  const [entryItems, setEntryItems] = useState<EntryItem[]>([]);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    (async () => {
+      try {
+        const [pr, rs] = await Promise.all([
+          fetch('/api/products').then((r) => r.json()),
+          fetch('/api/public?action=raffleState', { credentials: 'include' }).then((r) => r.json()),
+        ]);
+        const my = (rs && rs.myEntries) || {};
+        const items: EntryItem[] = (pr.products || [])
+          .filter((p: any) => (my[p.id] || 0) > 0)
+          .map((p: any) => ({
+            id: p.id,
+            title: p.name,
+            image: { uri: p.image || '' },
+            myCount: my[p.id],
+            announcementDate: p.announcementDate || '-',
+            status: '응모중',
+          }));
+        setEntryItems(items);
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
+
+  // 구(區) 도장 진행도 — 같은 구 5개마다 +1 PB.
+  const [districtStats, setDistrictStats] = useState<Record<string, number>>({});
+  const [districtGoal, setDistrictGoal] = useState(5);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    fetch('/api/public?action=districtStats', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.ok) {
+          setDistrictStats(d.districts || {});
+          if (d.goal) setDistrictGoal(d.goal);
+        }
+      })
+      .catch(() => {});
+  }, [myPosts.length]);
+
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
-  const [selectedPost, setSelectedPost] = useState<ReviewPost | null>(null);
+  const [selected, setSelected] = useState<GridPost | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
-  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [imgIndex, setImgIndex] = useState(0);
+  const [detailRatio, setDetailRatio] = useState(1); // 상세 이미지 가로/세로 비율
+  // 게시물 수정/삭제(인스타식) — 문구 편집은 로컬 오버라이드 + 피드 반영, 저장 유지.
+  const [postMenu, setPostMenu] = useState(false);
+  const [editPostOpen, setEditPostOpen] = useState(false);
+  const [editCaption, setEditCaption] = useState('');
+  const [editPrivate, setEditPrivate] = useState(false);
+  const [captionEdits, setCaptionEdits] = useState<Record<string, string>>({});
+  const [privacyEdits, setPrivacyEdits] = useState<Record<string, boolean>>({});
+  const [hiddenPosts, setHiddenPosts] = useState<string[]>([]);
+
+  // 편집 가능한 프로필(사진/이름/아이디/소개) — 기기에 저장돼 새로고침 후에도 유지.
+  const [name, setName] = useState('나');
+  const [handle, setHandle] = useState(me.handle);
+  const [bioLine, setBioLine] = useState('놀·먹·즐·마 기록 중 🍽');
+  const [editOpen, setEditOpen] = useState(false);
+  const [draftName, setDraftName] = useState(name);
+  const [draftHandle, setDraftHandle] = useState(handle);
+  const [draftBio, setDraftBio] = useState(bioLine);
+  const [draftAvatar, setDraftAvatar] = useState<string | null>(null);
+  const [cropUri, setCropUri] = useState<string | null>(null);
+
+  // 프로필 사진은 피드 컨텍스트에서 공유(홈 바이트 카드 등과 동일한 값).
+  const avatarSource = profileAvatar ? { uri: profileAvatar } : me.avatar;
 
   useEffect(() => {
     setActiveTab(initialTab);
   }, [initialTab]);
 
-  const burningPosts = useMemo(
-    () => reviewPosts.filter((post) => post.isBurning),
-    []
+  useEffect(() => {
+    (async () => {
+      try {
+        const [n, h, b, edits, priv, hidden] = await Promise.all([
+          AsyncStorage.getItem('PROFILE_NAME'),
+          AsyncStorage.getItem('PROFILE_HANDLE'),
+          AsyncStorage.getItem('PROFILE_BIO'),
+          AsyncStorage.getItem('POST_CAPTION_EDITS'),
+          AsyncStorage.getItem('POST_PRIVACY_EDITS'),
+          AsyncStorage.getItem('POST_HIDDEN'),
+        ]);
+        if (n) setName(n);
+        if (h) setHandle(h);
+        if (b) setBioLine(b);
+        if (edits) setCaptionEdits(JSON.parse(edits));
+        if (priv) setPrivacyEdits(JSON.parse(priv));
+        if (hidden) setHiddenPosts(JSON.parse(hidden));
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
+
+  const openEdit = () => {
+    setDraftName(name);
+    setDraftHandle(handle);
+    setDraftBio(bioLine);
+    setDraftAvatar(profileAvatar);
+    setEditOpen(true);
+  };
+
+  const pickAvatar = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      if (typeof window !== 'undefined' && window.alert) window.alert('사진 접근 권한이 필요해요.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (!res.canceled) {
+      const uri = res.assets[0].uri;
+      // 웹: 위치/확대 조정 크로퍼 열기. 네이티브: 자체 크롭 UI가 이미 처리.
+      if (Platform.OS === 'web') setCropUri(uri);
+      else setDraftAvatar(await downscaleAvatar(uri, 512));
+    }
+  };
+
+  const saveProfile = async () => {
+    const nextName = draftName.trim() || me.name || '나';
+    let nextHandle = draftHandle.trim().replace(/\s/g, '');
+    if (!nextHandle.startsWith('@')) nextHandle = '@' + nextHandle.replace(/^@+/, '');
+    if (nextHandle === '@') nextHandle = me.handle;
+    const nextBio = draftBio.trim() || '놀·먹·즐·마 기록 중 🍽';
+
+    // 즉시 로컬 반영(낙관적).
+    setName(nextName);
+    setHandle(nextHandle);
+    setBioLine(nextBio);
+    updateMe({ name: nextName, handle: nextHandle });
+    AsyncStorage.setItem('PROFILE_NAME', nextName).catch(() => {});
+    AsyncStorage.setItem('PROFILE_HANDLE', nextHandle).catch(() => {});
+    AsyncStorage.setItem('PROFILE_BIO', nextBio).catch(() => {});
+    setEditOpen(false);
+
+    // 아바타 업로드(새 사진이면) → 서버 URL 확보.
+    let avatarUrl = draftAvatar || '';
+    if (Platform.OS === 'web' && draftAvatar && draftAvatar.startsWith('data:')) {
+      try {
+        const r = await fetch('/api/public?action=upload', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dataUrl: draftAvatar }),
+        });
+        const d = await r.json();
+        if (d?.url) avatarUrl = d.url;
+      } catch {
+        // 업로드 실패 시 로컬 dataURL 유지
+      }
+    }
+    setProfileAvatar(avatarUrl || null);
+
+    // 서버 계정에 프로필 저장 → 다른 사람이 내 글에서 보는 이름/사진도 갱신.
+    if (Platform.OS === 'web') {
+      try {
+        await fetch('/api/auth?action=profile', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: nextName, handle: nextHandle, bio: nextBio, avatar: avatarUrl }),
+        });
+        // 서버 프로필이 바뀌었으니 내 게시물/피드의 작성자 정보 재조회.
+        refreshMyPosts();
+        refreshFeed();
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const shareProfile = async () => {
+    const url = typeof window !== 'undefined' && window.location ? window.location.origin : 'https://peed.co.kr';
+    const text = `${name}(${handle}) 님의 PEED 프로필`;
+    try {
+      if (typeof navigator !== 'undefined' && (navigator as any).share) {
+        await (navigator as any).share({ title: 'PEED', text, url });
+        return;
+      }
+    } catch {
+      // 공유 취소 등 — 아래 복사로 폴백
+    }
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(`${text} ${url}`);
+      if (typeof window !== 'undefined' && window.alert) window.alert('프로필 링크를 복사했어요!');
+    }
+  };
+
+  // My live feed posts (from reviews I've submitted) prepended to history.
+  const gridPosts = useMemo<GridPost[]>(() => {
+    const mine = myPosts.map<GridPost>((p) => ({
+      key: p.id,
+      images: p.image ? [p.image] : [],
+      isBurning: p.isBurning,
+      store: p.store,
+      category: p.category,
+      date: p.timeLabel,
+      rating: p.rating,
+      caption: p.caption,
+      earnedPb: p.earnedPb,
+      people: `${p.people}인`,
+      price: won(p.price),
+      isPrivate: p.isPrivate,
+    }));
+    return mine
+      .filter((p) => !hiddenPosts.includes(p.key))
+      .map((p) => {
+        const caption = captionEdits[p.key] != null ? captionEdits[p.key] : p.caption;
+        const isPrivate = privacyEdits[p.key] != null ? privacyEdits[p.key] : p.isPrivate;
+        return { ...p, caption, isPrivate };
+      });
+  }, [myPosts, captionEdits, privacyEdits, hiddenPosts]);
+
+  const stampCount = STAMP_BOARD.filter((n) => stamps.includes(n)).length;
+  // 구별 진행도: 방문 구 수 + 획득한 도장 보너스(5개마다 1개).
+  const districtList = Object.entries(districtStats).sort((a, b) => b[1] - a[1]);
+  const districtsVisited = districtList.length;
+  const stampBonus = districtList.reduce((s, [, c]) => s + Math.floor(c / districtGoal), 0);
+
+  // 상세 모달을 셸 오버레이로 등록 → 안드로이드 뒤로가기/스와이프가 좌상단
+  // 버튼과 동일하게 '모달 닫기'를 하도록(홈으로 안 감).
+  const closeDetailFn = useCallback(() => setDetailVisible(false), []);
+  const openPost = (post: GridPost) => {
+    setSelected(post);
+    setImgIndex(0);
+    setDetailRatio(1);
+    setDetailVisible(true);
+    openOverlay(closeDetailFn);
+  };
+  const closeDetail = () => {
+    setDetailVisible(false);
+    dropOverlay(closeDetailFn);
+  };
+
+  // 게시물 "…" 메뉴 + 수정/삭제 (오버레이 등록 → 뒤로가기로 닫힘).
+  const closePostMenuFn = useCallback(() => setPostMenu(false), []);
+  const closeEditPostFn = useCallback(() => setEditPostOpen(false), []);
+  const openPostMenu = () => {
+    setPostMenu(true);
+    openOverlay(closePostMenuFn);
+  };
+  const closePostMenu = () => {
+    setPostMenu(false);
+    dropOverlay(closePostMenuFn);
+  };
+  const startEditPost = () => {
+    if (!selected) return;
+    closePostMenu();
+    setEditCaption(selected.caption);
+    setEditPrivate(!!selected.isPrivate);
+    setEditPostOpen(true);
+    openOverlay(closeEditPostFn);
+  };
+  const closeEditPost = () => {
+    setEditPostOpen(false);
+    dropOverlay(closeEditPostFn);
+  };
+  const saveEditPost = () => {
+    if (!selected) return;
+    const cap = editCaption.trim();
+    const nextCap = { ...captionEdits, [selected.key]: cap };
+    const nextPriv = { ...privacyEdits, [selected.key]: editPrivate };
+    setCaptionEdits(nextCap);
+    setPrivacyEdits(nextPriv);
+    AsyncStorage.setItem('POST_CAPTION_EDITS', JSON.stringify(nextCap)).catch(() => {});
+    AsyncStorage.setItem('POST_PRIVACY_EDITS', JSON.stringify(nextPriv)).catch(() => {});
+    editPost(selected.key, { caption: cap, isPrivate: editPrivate }); // 피드 게시물이면 홈에도 반영
+    setSelected({ ...selected, caption: cap, isPrivate: editPrivate }); // 상세 즉시 반영
+    closeEditPost();
+  };
+  const deleteSelectedPost = () => {
+    if (!selected) return;
+    const ok =
+      typeof window === 'undefined' || !window.confirm ? true : window.confirm('이 게시물을 삭제할까요?');
+    if (!ok) return;
+    const next = [...hiddenPosts, selected.key];
+    setHiddenPosts(next);
+    AsyncStorage.setItem('POST_HIDDEN', JSON.stringify(next)).catch(() => {});
+    deletePost(selected.key); // 피드 게시물이면 제거
+    closePostMenu();
+    closeDetail();
+  };
+
+  // 상세 이미지 높이 — 원본 비율대로(위 잘림 방지). 너무 세로로 긴 사진만 클램프.
+  const detailImgHeight = Math.round(
+    Math.max(width * 0.72, Math.min(width * 1.4, width / (detailRatio || 1)))
   );
 
-  const todayCount = 12;
-  const feedCode = 'ABD12345';
-
-  const openPost = (post: ReviewPost) => {
-    setSelectedPost(post);
-    setCurrentImageIndex(0);
-    setDetailVisible(true);
-  };
-
-  const openNotice = () => {
-    router.push('/notice');
-  };
-
-  const openTerms = () => {
-    router.push('/terms');
-  };
-
-  const openSupport = () => {
-    router.push('/support');
-  };
-
-  const getWinBadgeStyle = (status: WinItem['status']) => {
-    if (status === '수령전') {
-      return {
-        wrap: styles.badgePending,
-        text: styles.badgePendingText,
-      };
-    }
-
-    if (status === '배송중') {
-      return {
-        wrap: styles.badgeShipping,
-        text: styles.badgeShippingText,
-      };
-    }
-
-    return {
-      wrap: styles.badgeDone,
-      text: styles.badgeDoneText,
-    };
-  };
-
-  const renderReviewGrid = () => {
-    if (burningPosts.length === 0) {
-      return (
-        <View style={styles.emptyWrap}>
-          <Text style={styles.emptyTitle}>아직 버닝기록이 없어요</Text>
-          <Text style={styles.emptyDesc}>
-            버닝매장 방문 인증을 완료하면 여기에 게시글이 쌓여요.
-          </Text>
-        </View>
-      );
-    }
-
-    return (
-      <View style={styles.gridWrap}>
-        {burningPosts.map((post) => (
-          <TouchableOpacity
-            key={post.id}
-            style={styles.gridItem}
-            onPress={() => openPost(post)}
-            activeOpacity={0.9}
-          >
-            <Image source={post.images[0]} style={styles.gridImage} />
-            {post.images.length > 1 && (
-              <View style={styles.multiBadge}>
-                <Text style={styles.multiBadgeText}>{post.images.length}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        ))}
-      </View>
-    );
-  };
-
-  const renderEntries = () => {
-    return (
-      <View style={styles.listWrap}>
-        {entryItems.map((item) => (
-          <View key={item.id} style={styles.listCard}>
-            <Image
-              source={item.image}
-              style={styles.listCardImage}
-              resizeMode="cover"
-            />
-            <View style={styles.listCardInfo}>
-              <Text style={styles.listCardTitle}>{item.title}</Text>
-              <Text style={styles.listCardSub}>내 응모 {item.myCount}회</Text>
-              <Text style={styles.listCardSub}>발표일 {item.announcementDate}</Text>
-            </View>
-            <View style={styles.smallBadge}>
-              <Text style={styles.smallBadgeText}>{item.status}</Text>
-            </View>
-          </View>
-        ))}
-      </View>
-    );
-  };
-
-  const renderWins = () => {
-    return (
-      <View style={styles.listWrap}>
-        {winItems.map((item) => {
-          const badgeStyle = getWinBadgeStyle(item.status);
-
-          return (
-            <View key={item.id} style={styles.listCard}>
-              <Image
-                source={item.image}
-                style={styles.listCardImage}
-                resizeMode="cover"
-              />
-              <View style={styles.listCardInfo}>
-                <Text style={styles.listCardTitle}>{item.title}</Text>
-                <Text style={styles.listCardSub}>당첨일 {item.wonDate}</Text>
-              </View>
-              <View style={[styles.smallBadge, badgeStyle.wrap]}>
-                <Text style={[styles.smallBadgeText, badgeStyle.text]}>
-                  {item.status}
-                </Text>
-              </View>
-            </View>
-          );
-        })}
-      </View>
-    );
+  const winBadge = (status: WinItem['status']) => {
+    if (status === '수령전') return { wrap: styles.badgePending, text: styles.badgePendingText };
+    if (status === '배송중') return { wrap: styles.badgeShipping, text: styles.badgeShippingText };
+    return { wrap: styles.badgeDone, text: styles.badgeDoneText };
   };
 
   return (
@@ -381,221 +451,507 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
       <StatusBar style="dark" />
 
       <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.contentContainer}
+        contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.profileCard}>
-          <View style={styles.profileTop}>
-            <Image
-              source={require('../../assets/images/profile.jpg')}
-              style={styles.profileImage}
+        <View style={styles.centerWrap}>
+        {/* ── profile header ── */}
+        <View style={styles.profileTop}>
+          <Image source={avatarSource} style={styles.avatar} />
+          <View style={styles.statsRow}>
+            <Stat value={comma(gridPosts.length)} label="게시물" />
+            <Stat
+              value={comma(followerCount)}
+              label="팔로워"
+              onPress={() => me.id && me.id !== 'me' && openFollowList(me.id, 'followers')}
             />
-
-            <View style={styles.profileInfo}>
-              <Text style={styles.profileName}>김승현</Text>
-              <View style={styles.codeRow}>
-                <Text style={styles.profileCode}>{feedCode}</Text>
-                <TouchableOpacity style={styles.copyButton}>
-                  <Text style={styles.copyButtonText}>복사</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+            <Stat
+              value={comma(followingCount)}
+              label="팔로잉"
+              onPress={() => me.id && me.id !== 'me' && openFollowList(me.id, 'following')}
+            />
           </View>
-
-          <View style={styles.statRow}>
-            <View style={styles.statBox}>
-              <Text style={styles.statLabel}>TODAY</Text>
-              <Text style={styles.statValue}>{todayCount}</Text>
-            </View>
-
-            <View style={styles.statBox}>
-              <Text style={styles.statLabel}>TOTAL</Text>
-              <Text style={styles.statValue}>{1286}</Text>
-            </View>
-          </View>
-
-          <Text style={styles.profileDesc}>
-            버닝매장 인증 게시글과 응모 내역, 당첨 내역을 한 번에 관리해 보세요.
-          </Text>
         </View>
 
+        <Text style={styles.name}>{name}</Text>
+        <Text style={styles.handle}>{handle}</Text>
+        <Text style={styles.bio}>
+          {bioLine}{'\n'}🗺️ {districtsVisited}개 구에서 리뷰 중 · 리뷰로 PB 모으는 중
+        </Text>
+
+        <View style={styles.chips}>
+          <View style={[styles.chip, styles.chipPb]}>
+            <Text style={styles.chipPbText}>💎 {comma(pb)} PB</Text>
+          </View>
+          <View style={[styles.chip, styles.chipStamp]}>
+            <Text style={styles.chipStampText}>🔴 도장 {stampBonus}</Text>
+          </View>
+        </View>
+
+        {/* ── 구(區) 도장 패스포트 — 같은 구 5개마다 +1 PB ── */}
+        {districtsVisited > 0 && (
+          <View style={styles.passport}>
+            <Text style={styles.passportTitle}>
+              🗺️ 동네 도장 · 구별 리뷰 {districtGoal}개마다 +1 PB
+            </Text>
+            {districtList.map(([name, count]) => {
+              const inCycle = count % districtGoal;
+              const progress = inCycle === 0 ? districtGoal : inCycle;
+              return (
+                <View key={name} style={styles.ppRow}>
+                  <Text style={styles.ppName}>{name}</Text>
+                  <View style={styles.ppTrack}>
+                    <View
+                      style={[styles.ppFill, { width: `${(progress / districtGoal) * 100}%` }]}
+                    />
+                  </View>
+                  <Text style={styles.ppCount}>
+                    {progress}/{districtGoal}
+                    {count >= districtGoal ? ` · 🎁${Math.floor(count / districtGoal)}` : ''}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        <View style={styles.actions}>
+          <TouchableOpacity style={styles.editBtn} activeOpacity={0.85} onPress={openEdit}>
+            <Text style={styles.editBtnText}>프로필 편집</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} activeOpacity={0.85} onPress={shareProfile}>
+            <Ionicons name="share-outline" size={18} color={colors.textPrimary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            activeOpacity={0.85}
+            onPress={() => setTab('settings')}
+          >
+            <Ionicons name="settings-outline" size={18} color={colors.textPrimary} />
+          </TouchableOpacity>
+        </View>
+
+        {/* ── tabs ── */}
         <View style={styles.tabBar}>
-          <TouchableOpacity
-            style={styles.topTabItem}
-            onPress={() => setActiveTab('reviews')}
-          >
-            <Text
-              style={
-                activeTab === 'reviews'
-                  ? styles.topTabTextActive
-                  : styles.topTabText
-              }
-            >
-              버닝기록
-            </Text>
-            {activeTab === 'reviews' && <View style={styles.topTabLine} />}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.topTabItem}
-            onPress={() => setActiveTab('entries')}
-          >
-            <Text
-              style={
-                activeTab === 'entries'
-                  ? styles.topTabTextActive
-                  : styles.topTabText
-              }
-            >
-              응모중
-            </Text>
-            {activeTab === 'entries' && <View style={styles.topTabLine} />}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.topTabItem}
-            onPress={() => setActiveTab('wins')}
-          >
-            <Text
-              style={
-                activeTab === 'wins'
-                  ? styles.topTabTextActive
-                  : styles.topTabText
-              }
-            >
-              당첨내역
-            </Text>
-            {activeTab === 'wins' && <View style={styles.topTabLine} />}
-          </TouchableOpacity>
+          {TABS.map((t) => {
+            const active = activeTab === t.key;
+            return (
+              <TouchableOpacity
+                key={t.key}
+                style={styles.tab}
+                onPress={() => setActiveTab(t.key)}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name={t.icon}
+                  size={20}
+                  color={active ? colors.textPrimary : colors.textTertiary}
+                />
+                <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
+                  {t.label}
+                </Text>
+                {active && <View style={styles.tabUnderline} />}
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
-        {activeTab === 'reviews' && renderReviewGrid()}
-        {activeTab === 'entries' && renderEntries()}
-        {activeTab === 'wins' && renderWins()}
+        {/* ── tab content ── */}
+        {activeTab === 'reviews' && gridPosts.length === 0 && (
+          <View style={styles.resEmpty}>
+            <Text style={styles.resEmptyEmoji}>🍽</Text>
+            <Text style={styles.resEmptyText}>
+              아직 올린 게시물이 없어요{'\n'}버닝 매장에서 첫 리뷰를 남겨보세요
+            </Text>
+          </View>
+        )}
+        {activeTab === 'reviews' && gridPosts.length > 0 && (
+          <View style={styles.grid}>
+            {gridPosts.map((post) => (
+              <TouchableOpacity
+                key={post.key}
+                style={styles.gridItem}
+                onPress={() => openPost(post)}
+                activeOpacity={0.9}
+              >
+                <Image source={post.images[0]} style={styles.gridImage} />
+                {post.isBurning && (
+                  <View style={styles.burnDot}>
+                    <Text style={styles.burnDotText}>🔥</Text>
+                  </View>
+                )}
+                {post.images.length > 1 && (
+                  <View style={styles.multiBadge}>
+                    <Ionicons name="copy" size={12} color={colors.white} />
+                  </View>
+                )}
+                {post.isPrivate && (
+                  <View style={styles.lockBadge}>
+                    <Ionicons name="lock-closed" size={12} color={colors.white} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
-        <View style={styles.menuSection}>
-          <TouchableOpacity style={styles.menuItem} onPress={openNotice}>
-            <Text style={styles.menuItemText}>공지사항</Text>
-            <Text style={styles.menuArrow}>›</Text>
-          </TouchableOpacity>
+        {activeTab === 'entries' && entryItems.length === 0 && (
+          <View style={styles.resEmpty}>
+            <Text style={styles.resEmptyEmoji}>🎟️</Text>
+            <Text style={styles.resEmptyText}>
+              응모 중인 경품이 없어요{'\n'}PB를 모아 경품에 응모해보세요
+            </Text>
+          </View>
+        )}
+        {activeTab === 'entries' && entryItems.length > 0 && (
+          <View style={styles.list}>
+            {entryItems.map((item) => (
+              <View key={item.id} style={styles.listCard}>
+                <Image source={item.image} style={styles.listImage} resizeMode="cover" />
+                <View style={styles.listInfo}>
+                  <Text style={styles.listTitle}>{item.title}</Text>
+                  <Text style={styles.listSub}>내 응모 {item.myCount}회</Text>
+                  <Text style={styles.listSub}>발표일 {item.announcementDate}</Text>
+                </View>
+                <View style={styles.smallBadge}>
+                  <Text style={styles.smallBadgeText}>{item.status}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
 
-          <TouchableOpacity style={styles.menuItem} onPress={openTerms}>
-            <Text style={styles.menuItemText}>이용약관</Text>
-            <Text style={styles.menuArrow}>›</Text>
-          </TouchableOpacity>
+        {activeTab === 'wins' && winItems.length === 0 && (
+          <View style={styles.resEmpty}>
+            <Text style={styles.resEmptyEmoji}>🏆</Text>
+            <Text style={styles.resEmptyText}>
+              아직 당첨 내역이 없어요{'\n'}경품에 응모하고 행운을 기대해보세요
+            </Text>
+          </View>
+        )}
+        {activeTab === 'wins' && winItems.length > 0 && (
+          <View style={styles.list}>
+            {winItems.map((item) => {
+              const b = winBadge(item.status);
+              return (
+                <View key={item.id} style={styles.listCard}>
+                  <Image source={item.image} style={styles.listImage} resizeMode="cover" />
+                  <View style={styles.listInfo}>
+                    <Text style={styles.listTitle}>{item.title}</Text>
+                    <Text style={styles.listSub}>당첨일 {item.wonDate}</Text>
+                  </View>
+                  <View style={[styles.smallBadge, b.wrap]}>
+                    <Text style={[styles.smallBadgeText, b.text]}>{item.status}</Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
 
-          <TouchableOpacity
-            style={[styles.menuItem, styles.lastMenuItem]}
-            onPress={openSupport}
-          >
-            <Text style={styles.menuItemText}>고객센터</Text>
-            <Text style={styles.menuArrow}>›</Text>
-          </TouchableOpacity>
-        </View>
+        {activeTab === 'reservations' && (
+          <View style={styles.list}>
+            {reservations.length === 0 ? (
+              <View style={styles.resEmpty}>
+                <Text style={styles.resEmptyEmoji}>🍽</Text>
+                <Text style={styles.resEmptyText}>
+                  아직 예약이 없어요{'\n'}매장을 예약하고 PB 보너스 받아보세요
+                </Text>
+              </View>
+            ) : (
+              reservations.map((r) => {
+                const meta =
+                  r.status === 'confirmed'
+                    ? { label: '예약확정', wrap: styles.resConfirm, text: styles.resConfirmText }
+                    : r.status === 'visited'
+                      ? { label: '방문완료', wrap: styles.resVisited, text: styles.resVisitedText }
+                      : { label: '취소됨', wrap: styles.badgeDone, text: styles.badgeDoneText };
+                return (
+                  <View key={r.id} style={styles.listCard}>
+                    <Image source={r.storeImage} style={styles.listImage} resizeMode="cover" />
+                    <View style={styles.listInfo}>
+                      <Text style={styles.listTitle}>{r.storeName}</Text>
+                      <Text style={styles.listSub}>
+                        {r.dateLabel} {r.time} · {r.party}명
+                      </Text>
+                      {r.heldPb > 0 && (
+                        <Text style={styles.listSub}>🔒 보증 {r.heldPb} PB</Text>
+                      )}
+                    </View>
+                    <View style={styles.resRight}>
+                      <View style={[styles.smallBadge, meta.wrap]}>
+                        <Text style={[styles.smallBadgeText, meta.text]}>
+                          {meta.label}
+                        </Text>
+                      </View>
+                      {r.status === 'confirmed' && (
+                        <View style={styles.resActions}>
+                          <TouchableOpacity
+                            onPress={() => markVisited(r.id)}
+                            style={styles.resVisitBtn}
+                          >
+                            <Text style={styles.resVisitBtnText}>방문완료</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => cancel(r.id)}>
+                            <Text style={styles.resCancelText}>취소</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </View>
+        )}
 
         <View style={{ height: 24 }} />
+        </View>
       </ScrollView>
 
+      {/* ── detail modal ── */}
       <Modal
         visible={detailVisible}
         animationType="slide"
-        onRequestClose={() => setDetailVisible(false)}
+        onRequestClose={closeDetail}
       >
-        <SafeAreaView style={styles.detailContainer} edges={['top', 'bottom']}>
+        <SafeAreaView style={styles.detail} edges={['top', 'bottom']}>
           <View style={styles.detailHeader}>
-            <TouchableOpacity onPress={() => setDetailVisible(false)}>
-              <Text style={styles.detailBack}>←</Text>
+            <TouchableOpacity onPress={closeDetail} hitSlop={10}>
+              <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
             </TouchableOpacity>
             <Text style={styles.detailHeaderTitle}>게시물</Text>
-            <View style={{ width: 24 }} />
+            <TouchableOpacity onPress={openPostMenu} hitSlop={10}>
+              <Ionicons name="ellipsis-horizontal" size={22} color={colors.textPrimary} />
+            </TouchableOpacity>
           </View>
 
-          {selectedPost && (
-            <ScrollView
-              style={styles.detailScroll}
-              contentContainerStyle={styles.detailContent}
-              showsVerticalScrollIndicator={false}
-            >
-              <FlatList
-                data={selectedPost.images}
+          {selected && (
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <ScrollView
                 horizontal
                 pagingEnabled
                 showsHorizontalScrollIndicator={false}
-                keyExtractor={(_, index) => `${selectedPost.id}-${index}`}
-                renderItem={({ item }) => (
-                  <Image source={item} style={styles.detailImage} resizeMode="cover" />
-                )}
-                onMomentumScrollEnd={(e) => {
-                  const idx = Math.round(
-                    e.nativeEvent.contentOffset.x / width
-                  );
-                  setCurrentImageIndex(idx);
-                }}
-              />
+                onMomentumScrollEnd={(e) =>
+                  setImgIndex(Math.round(e.nativeEvent.contentOffset.x / width))
+                }
+              >
+                {selected.images.map((img, i) => (
+                  <Image
+                    key={i}
+                    source={img}
+                    style={[styles.detailImage, { height: detailImgHeight }]}
+                    resizeMode="cover"
+                    onLoad={(e) => {
+                      if (i !== 0) return;
+                      const src: any = (e.nativeEvent as any)?.source || e.nativeEvent;
+                      const w = src?.width;
+                      const h = src?.height;
+                      if (w && h) setDetailRatio(w / h);
+                    }}
+                  />
+                ))}
+              </ScrollView>
 
-              <View style={styles.imageCountBadge}>
-                <Text style={styles.imageCountText}>
-                  {currentImageIndex + 1}/{selectedPost.images.length}
-                </Text>
-              </View>
-
-              <View style={styles.postMetaCard}>
-                <View style={styles.postMetaTop}>
-                  <View style={styles.authorRow}>
-                    <Image
-                      source={require('../../assets/images/profile.jpg')}
-                      style={styles.authorImage}
+              {selected.images.length > 1 && (
+                <View style={styles.dots}>
+                  {selected.images.map((_, i) => (
+                    <View
+                      key={i}
+                      style={[styles.dot, imgIndex === i && styles.dotActive]}
                     />
-                    <View>
-                      <Text style={styles.authorName}>{selectedPost.author}</Text>
-                      <Text style={styles.authorDate}>{selectedPost.date}</Text>
-                    </View>
-                  </View>
+                  ))}
                 </View>
-              </View>
+              )}
 
-              <View style={styles.detailInfoSection}>
-                <View style={styles.detailInfoCard}>
-                  <View style={styles.detailInfoTop}>
-                    <View>
-                      <Text style={styles.detailStoreName}>
-                        {selectedPost.storeName}
-                      </Text>
-                      <Text style={styles.detailStoreCategory}>
-                        {selectedPost.storeCategory}
-                      </Text>
-                    </View>
-
-                    {selectedPost.isBurning && (
-                      <View style={styles.detailBurningBadge}>
-                        <Text style={styles.detailBurningBadgeText}>
-                          버닝 매장
-                        </Text>
-                      </View>
-                    )}
+              <View style={styles.detailBody}>
+                <View style={styles.detailTitleRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.detailStore}>{selected.store}</Text>
+                    <Text style={styles.detailMeta}>
+                      {selected.category} · {selected.date}
+                    </Text>
                   </View>
-
-                  <Text style={styles.detailStoreAddress}>
-                    {selectedPost.storeAddress}
-                  </Text>
-
-                  <TouchableOpacity style={styles.detailStoreButton}>
-                    <Text style={styles.detailStoreButtonText}>매장 보기</Text>
-                  </TouchableOpacity>
+                  {selected.isPrivate && (
+                    <View style={styles.privateChip}>
+                      <Ionicons name="lock-closed" size={12} color={colors.textSecondary} />
+                      <Text style={styles.privateChipText}>비공개</Text>
+                    </View>
+                  )}
+                  {selected.isBurning && (
+                    <View style={styles.detailBurn}>
+                      <Text style={styles.detailBurnText}>🔥 버닝</Text>
+                    </View>
+                  )}
                 </View>
 
-                <View style={styles.detailInfoCard}>
-                  <Text style={styles.detailCardLabel}>한줄 평</Text>
-                  <Text style={styles.detailSummaryText}>
-                    {selectedPost.summary}
-                  </Text>
-                  <Text style={styles.detailSummarySub}>
-                    방문 후 남긴 짧은 기록이에요.
-                  </Text>
+                <Text style={styles.detailCaption}>{selected.caption}</Text>
+
+                <View style={styles.detailReceipt}>
+                  <DRow label="인원" value={selected.people} />
+                  <DRow label="결제금액" value={selected.price} />
+                  {selected.menu ? <DRow label="메뉴" value={selected.menu} /> : null}
+                  {selected.platform ? (
+                    <DRow label="리뷰 플랫폼" value={selected.platform} />
+                  ) : null}
+                  {selected.address ? <DRow label="위치" value={selected.address} /> : null}
+                  <View style={styles.detailPbRow}>
+                    <Text style={styles.detailPbLabel}>PEEDBACK 적립</Text>
+                    <Text style={styles.detailPbValue}>+{selected.earnedPb} PB</Text>
+                  </View>
                 </View>
               </View>
             </ScrollView>
+          )}
+        </SafeAreaView>
+      </Modal>
+
+      {/* ── post "…" menu ── */}
+      <Modal visible={postMenu} transparent animationType="fade" onRequestClose={closePostMenu}>
+        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={closePostMenu}>
+          <TouchableOpacity style={styles.sheet} activeOpacity={1}>
+            <View style={styles.sheetHandle} />
+            <TouchableOpacity style={styles.sheetItem} onPress={startEditPost} activeOpacity={0.8}>
+              <Ionicons name="create-outline" size={20} color={colors.textPrimary} />
+              <Text style={styles.sheetItemText}>수정</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.sheetItem} onPress={deleteSelectedPost} activeOpacity={0.8}>
+              <Ionicons name="trash-outline" size={20} color={colors.danger} />
+              <Text style={[styles.sheetItemText, { color: colors.danger }]}>삭제</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.sheetItem, styles.sheetCancel]} onPress={closePostMenu} activeOpacity={0.8}>
+              <Text style={styles.sheetCancelText}>취소</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── post edit (Instagram-style) ── */}
+      <Modal visible={editPostOpen} animationType="slide" onRequestClose={closeEditPost}>
+        <SafeAreaView style={styles.editScreen} edges={['top', 'bottom']}>
+          <View style={styles.editHeader}>
+            <TouchableOpacity onPress={closeEditPost} hitSlop={10}>
+              <Text style={styles.editHeaderCancel}>취소</Text>
+            </TouchableOpacity>
+            <Text style={styles.editHeaderTitle}>정보 수정</Text>
+            <TouchableOpacity onPress={saveEditPost} hitSlop={10}>
+              <Text style={styles.editHeaderDone}>완료</Text>
+            </TouchableOpacity>
+          </View>
+
+          {selected && (
+            <ScrollView contentContainerStyle={styles.postEditBody} showsVerticalScrollIndicator={false}>
+              <View style={styles.postEditTop}>
+                <Image source={selected.images[0]} style={styles.postEditThumb} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.postEditStore}>{selected.store}</Text>
+                  <Text style={styles.postEditMeta}>
+                    {selected.category} · {selected.date}
+                  </Text>
+                </View>
+              </View>
+              <TextInput
+                value={editCaption}
+                onChangeText={setEditCaption}
+                placeholder="문구 입력..."
+                placeholderTextColor={colors.textTertiary}
+                style={styles.postEditCaption}
+                multiline
+                autoFocus
+                maxLength={300}
+              />
+
+              <Text style={styles.postEditLabel}>공개 설정</Text>
+              <View style={styles.visRow}>
+                <TouchableOpacity
+                  style={[styles.visBtn, !editPrivate && styles.visBtnOn]}
+                  onPress={() => setEditPrivate(false)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="earth" size={18} color={!editPrivate ? colors.primary : colors.textSecondary} />
+                  <Text style={[styles.visBtnText, !editPrivate && styles.visBtnTextOn]}>공개</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.visBtn, editPrivate && styles.visBtnOn]}
+                  onPress={() => setEditPrivate(true)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="lock-closed" size={18} color={editPrivate ? colors.primary : colors.textSecondary} />
+                  <Text style={[styles.visBtnText, editPrivate && styles.visBtnTextOn]}>비공개</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.postEditHint}>
+                {editPrivate
+                  ? '비공개 — 홈 피드엔 안 보이고 내 프로필에서만 보여요.'
+                  : '공개 — 홈 피드에 노출돼요. 사진·영수증 정보는 수정할 수 없어요.'}
+              </Text>
+            </ScrollView>
+          )}
+        </SafeAreaView>
+      </Modal>
+
+      {/* ── profile edit (Instagram-style full screen) ── */}
+      <Modal visible={editOpen} animationType="slide" onRequestClose={() => setEditOpen(false)}>
+        <SafeAreaView style={styles.editScreen} edges={['top', 'bottom']}>
+          <View style={styles.editHeader}>
+            <TouchableOpacity onPress={() => setEditOpen(false)} hitSlop={10}>
+              <Text style={styles.editHeaderCancel}>취소</Text>
+            </TouchableOpacity>
+            <Text style={styles.editHeaderTitle}>프로필 편집</Text>
+            <TouchableOpacity onPress={saveProfile} hitSlop={10}>
+              <Text style={styles.editHeaderDone}>완료</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.editBody} showsVerticalScrollIndicator={false}>
+            {/* avatar */}
+            <View style={styles.editAvatarWrap}>
+              <TouchableOpacity onPress={pickAvatar} activeOpacity={0.85} style={styles.editAvatarBtn}>
+                <Image
+                  source={draftAvatar ? { uri: draftAvatar } : avatarSource}
+                  style={styles.editAvatar}
+                />
+                <View style={styles.editAvatarBadge}>
+                  <Ionicons name="camera" size={15} color={colors.white} />
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={pickAvatar} hitSlop={8}>
+                <Text style={styles.editAvatarText}>프로필 사진 바꾸기</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* fields */}
+            <View style={styles.editFields}>
+              <EditField label="이름" value={draftName} onChangeText={setDraftName} placeholder="이름" maxLength={20} />
+              <EditField
+                label="사용자 이름"
+                value={draftHandle}
+                onChangeText={setDraftHandle}
+                placeholder="@아이디"
+                maxLength={24}
+                autoCapitalize="none"
+              />
+              <EditField
+                label="소개"
+                value={draftBio}
+                onChangeText={setDraftBio}
+                placeholder="한 줄 소개"
+                maxLength={60}
+                multiline
+                last
+              />
+            </View>
+          </ScrollView>
+
+          {cropUri && (
+            <AvatarCropper
+              uri={cropUri}
+              onCancel={() => setCropUri(null)}
+              onDone={(dataUri) => {
+                setDraftAvatar(dataUri);
+                setCropUri(null);
+              }}
+            />
           )}
         </SafeAreaView>
       </Modal>
@@ -603,520 +959,731 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
   );
 }
 
+function EditField({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  maxLength,
+  multiline,
+  autoCapitalize,
+  last,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (v: string) => void;
+  placeholder?: string;
+  maxLength?: number;
+  multiline?: boolean;
+  autoCapitalize?: 'none' | 'sentences';
+  last?: boolean;
+}) {
+  return (
+    <View style={[styles.editRow, !last && styles.editRowBorder]}>
+      <Text style={styles.editRowLabel}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={colors.textTertiary}
+        style={styles.editRowInput}
+        maxLength={maxLength}
+        multiline={multiline}
+        autoCapitalize={autoCapitalize}
+      />
+    </View>
+  );
+}
+
+function Stat({ value, label, onPress }: { value: string; label: string; onPress?: () => void }) {
+  return (
+    <TouchableOpacity style={styles.stat} activeOpacity={onPress ? 0.6 : 1} onPress={onPress} disabled={!onPress}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function DRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.dRow}>
+      <Text style={styles.dLabel}>{label}</Text>
+      <Text style={styles.dValue}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F7F8FA',
+    backgroundColor: colors.bg,
+  },
+  content: {
+    paddingTop: spacing.md,
+    paddingBottom: 24,
+    alignItems: 'center',
+  },
+  centerWrap: {
+    width: APP_WIDTH,
+    paddingHorizontal: spacing.lg,
   },
 
-  scroll: {
-    flex: 1,
-  },
-
-  contentContainer: {
-    paddingHorizontal: 18,
-    paddingTop: 6,
-    paddingBottom: 80,
-  },
-
-  profileCard: {
-    backgroundColor: '#EEF2FF',
-    borderRadius: 28,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#DCE6FF',
-    marginBottom: 18,
-  },
-
+  /* profile header */
   profileTop: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: spacing.xl,
   },
-
-  profileImage: {
-    width: 82,
-    height: 82,
-    borderRadius: 41,
-    marginRight: 16,
+  avatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: colors.surfaceAlt,
   },
-
-  profileInfo: {
+  statsRow: {
     flex: 1,
-  },
-
-  profileName: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 8,
-  },
-
-  codeRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    justifyContent: 'space-around',
   },
-
-  profileCode: {
-    fontSize: 18,
+  stat: {
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: 19,
     fontWeight: '800',
-    color: '#111827',
+    color: colors.textPrimary,
   },
-
-  copyButton: {
-    height: 32,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#DCE6FF',
-  },
-
-  copyButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: BRAND_BLUE,
-  },
-
-  statRow: {
-    flexDirection: 'row',
-    marginTop: 18,
-    gap: 10,
-  },
-
-  statBox: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    paddingVertical: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-
   statLabel: {
     fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+
+  name: {
+    fontSize: 18,
     fontWeight: '800',
-    color: '#6B7280',
+    color: colors.textPrimary,
+    marginTop: spacing.lg,
+  },
+  handle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  bio: {
+    fontSize: 13.5,
+    lineHeight: 20,
+    color: colors.textPrimary,
+    marginTop: spacing.sm,
+    fontWeight: '500',
+  },
+
+  chips: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  chip: {
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 7,
+  },
+  chipPb: {
+    backgroundColor: colors.primarySoft,
+  },
+  chipPbText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  chipStamp: {
+    backgroundColor: '#FDECEC',
+  },
+  chipStampText: {
+    color: '#E23B3B',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
+  passport: {
+    marginTop: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: spacing.xs,
+  },
+  passportTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: colors.textSecondary,
     marginBottom: 4,
   },
-
-  statValue: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#111827',
+  ppRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  ppName: { width: 64, fontSize: 13, fontWeight: '800', color: colors.textPrimary },
+  ppTrack: {
+    flex: 1,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.lineStrong,
+    overflow: 'hidden',
   },
+  ppFill: { height: '100%', borderRadius: 4, backgroundColor: colors.primary },
+  ppCount: { minWidth: 58, textAlign: 'right', fontSize: 12, fontWeight: '800', color: colors.textSecondary },
 
-  profileDesc: {
-    marginTop: 14,
+  actions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  editBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editBtnText: {
     fontSize: 14,
-    lineHeight: 21,
-    color: '#4B5563',
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
+  inviteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  inviteText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  inviteCode: {
+    color: colors.textPrimary,
+    fontWeight: '800',
+  },
+  copyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  copyText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
+  /* tabs */
   tabBar: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    paddingVertical: 6,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    marginTop: spacing.xl,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
   },
-
-  topTabItem: {
+  tab: {
     flex: 1,
     alignItems: 'center',
-    paddingTop: 10,
-    paddingBottom: 8,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    gap: 3,
   },
-
-  topTabText: {
-    fontSize: 15,
+  tabLabel: {
+    fontSize: 11.5,
     fontWeight: '700',
-    color: '#9CA3AF',
+    color: colors.textTertiary,
   },
-
-  topTabTextActive: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#111827',
+  tabLabelActive: {
+    color: colors.textPrimary,
   },
-
-  topTabLine: {
-    marginTop: 8,
-    width: 24,
-    height: 3,
+  tabUnderline: {
+    position: 'absolute',
+    bottom: -1,
+    height: 2,
+    width: '55%',
+    backgroundColor: colors.textPrimary,
     borderRadius: 2,
-    backgroundColor: BRAND_BLUE,
   },
 
-  gridWrap: {
+  /* grid */
+  grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: GRID_GAP,
-    justifyContent: 'flex-start',
+    paddingTop: GRID_GAP,
   },
-
   gridItem: {
-    width: GRID_ITEM_SIZE,
-    height: GRID_ITEM_SIZE,
-    backgroundColor: '#E5E7EB',
+    width: GRID_ITEM,
+    height: GRID_ITEM,
+    borderRadius: radius.sm,
     overflow: 'hidden',
-    borderRadius: 10,
+    backgroundColor: colors.surfaceAlt,
   },
-
   gridImage: {
     width: '100%',
     height: '100%',
   },
-
+  burnDot: {
+    position: 'absolute',
+    top: 5,
+    left: 5,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    borderRadius: radius.pill,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  burnDotText: {
+    fontSize: 11,
+  },
   multiBadge: {
     position: 'absolute',
-    right: 8,
-    top: 8,
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
-    paddingHorizontal: 6,
-    backgroundColor: 'rgba(17,24,39,0.75)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    top: 6,
+    right: 6,
   },
 
-  multiBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
+  /* entries / wins list */
+  list: {
+    paddingTop: spacing.lg,
+    gap: spacing.md,
   },
-
-  listWrap: {
-    gap: 12,
-  },
-
   listCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: spacing.md,
+    ...shadow.soft,
   },
-
-  listCardImage: {
-    width: 84,
-    height: 84,
-    borderRadius: 16,
-    marginRight: 14,
+  listImage: {
+    width: 60,
+    height: 60,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
   },
-
-  listCardInfo: {
+  listInfo: {
     flex: 1,
   },
-
-  listCardTitle: {
-    fontSize: 18,
+  listTitle: {
+    fontSize: 15,
     fontWeight: '800',
-    color: '#111827',
-    marginBottom: 6,
+    color: colors.textPrimary,
+    marginBottom: 3,
   },
-
-  listCardSub: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 4,
+  listSub: {
+    fontSize: 12.5,
+    color: colors.textSecondary,
     fontWeight: '600',
+    marginTop: 1,
   },
-
   smallBadge: {
-    backgroundColor: '#EEF2FF',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    alignSelf: 'flex-start',
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
   },
-
   smallBadgeText: {
-    color: BRAND_BLUE,
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  badgePending: { backgroundColor: colors.coralSoft },
+  badgePendingText: { color: colors.coralDeep },
+  badgeShipping: { backgroundColor: '#FDF0D9' },
+  badgeShippingText: { color: '#B4770E' },
+  badgeDone: { backgroundColor: colors.surfaceAlt },
+  badgeDoneText: { color: colors.textSecondary },
+
+  /* reservations */
+  resConfirm: { backgroundColor: colors.primarySoft },
+  resConfirmText: { color: colors.primary },
+  resVisited: { backgroundColor: colors.limeSoft },
+  resVisitedText: { color: colors.limeInk },
+  resRight: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  resActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  resVisitBtn: {
+    backgroundColor: colors.coral,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+  },
+  resVisitBtnText: {
+    color: colors.white,
     fontSize: 12,
     fontWeight: '800',
   },
-
-  badgePending: {
-    backgroundColor: '#F3F4F6',
+  resCancelText: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    fontWeight: '700',
   },
-
-  badgePendingText: {
-    color: '#6B7280',
-  },
-
-  badgeShipping: {
-    backgroundColor: '#EEF2FF',
-  },
-
-  badgeShippingText: {
-    color: '#4F6EF7',
-  },
-
-  badgeDone: {
-    backgroundColor: '#EAFBF1',
-  },
-
-  badgeDoneText: {
-    color: '#16A34A',
-  },
-
-  emptyWrap: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    paddingVertical: 42,
-    paddingHorizontal: 20,
+  resEmpty: {
     alignItems: 'center',
+    paddingVertical: spacing['3xl'],
+    gap: spacing.md,
   },
-
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 8,
+  resEmptyEmoji: {
+    fontSize: 40,
   },
-
-  emptyDesc: {
+  resEmptyText: {
     fontSize: 14,
-    lineHeight: 21,
-    color: '#6B7280',
+    color: colors.textSecondary,
+    fontWeight: '600',
     textAlign: 'center',
+    lineHeight: 20,
   },
 
-  menuSection: {
-    marginTop: 18,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    overflow: 'hidden',
+  /* menu */
+  menu: {
+    marginTop: spacing.xl,
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    ...shadow.soft,
   },
-
   menuItem: {
-    minHeight: 58,
-    paddingHorizontal: 18,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: colors.line,
   },
-
-  lastMenuItem: {
+  menuItemLast: {
     borderBottomWidth: 0,
   },
-
   menuItemText: {
-    fontSize: 15,
+    fontSize: 14.5,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
-  menuArrow: {
-    fontSize: 22,
-    lineHeight: 22,
-    color: '#9CA3AF',
-    fontWeight: '700',
-  },
-
-  detailContainer: {
-    flex: 1,
-    backgroundColor: '#F7F8FA',
-  },
-
-  detailHeader: {
-    height: 56,
-    paddingHorizontal: 18,
+  /* profile edit — Instagram style */
+  editScreen: { flex: 1, backgroundColor: colors.bg },
+  editHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.line,
   },
-
-  detailBack: {
-    fontSize: 28,
-    color: '#111827',
+  editHeaderCancel: { fontSize: 15, fontWeight: '700', color: colors.textSecondary },
+  editHeaderTitle: { fontSize: 16, fontWeight: '800', color: colors.textPrimary },
+  editHeaderDone: { fontSize: 15, fontWeight: '900', color: colors.primary },
+  editBody: { alignItems: 'center', paddingTop: spacing.xl },
+  editAvatarWrap: { alignItems: 'center', gap: spacing.md, marginBottom: spacing.xl },
+  editAvatarBtn: { position: 'relative' },
+  editAvatar: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: colors.surfaceAlt,
+  },
+  editAvatarBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: colors.bg,
+  },
+  editAvatarText: { fontSize: 14, fontWeight: '800', color: colors.primary },
+  editFields: { width: APP_WIDTH, paddingHorizontal: spacing.lg },
+  editRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: spacing.lg,
+    gap: spacing.md,
+  },
+  editRowBorder: { borderBottomWidth: 1, borderBottomColor: colors.line },
+  editRowLabel: {
+    width: 92,
+    fontSize: 14.5,
     fontWeight: '700',
+    color: colors.textPrimary,
+    paddingTop: 2,
   },
-
-  detailHeaderTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#111827',
-  },
-
-  detailScroll: {
+  editRowInput: {
     flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    padding: 0,
+    ...({ outlineStyle: 'none' } as object),
   },
 
-  detailContent: {
-    paddingBottom: 28,
+  /* post "…" menu sheet */
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15,18,34,0.45)',
+    justifyContent: 'flex-end',
   },
+  sheet: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing['2xl'],
+    width: '100%',
+    maxWidth: APP_WIDTH,
+    alignSelf: 'center',
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.lineStrong,
+    marginBottom: spacing.sm,
+  },
+  sheetItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.lg,
+  },
+  sheetItemText: { fontSize: 15.5, fontWeight: '800', color: colors.textPrimary },
+  sheetCancel: {
+    justifyContent: 'center',
+    marginTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+  },
+  sheetCancelText: { fontSize: 15.5, fontWeight: '800', color: colors.textSecondary },
 
+  /* post edit */
+  postEditBody: { padding: spacing.lg },
+  postEditTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingBottom: spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+    marginBottom: spacing.lg,
+  },
+  postEditThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  postEditStore: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+  postEditMeta: { fontSize: 12.5, fontWeight: '600', color: colors.textSecondary, marginTop: 2 },
+  postEditCaption: {
+    minHeight: 120,
+    fontSize: 15.5,
+    lineHeight: 23,
+    fontWeight: '500',
+    color: colors.textPrimary,
+    textAlignVertical: 'top',
+    padding: 0,
+    ...({ outlineStyle: 'none' } as object),
+  },
+  postEditHint: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: colors.textTertiary,
+    marginTop: spacing.md,
+  },
+  postEditLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginTop: spacing.xl,
+    marginBottom: spacing.sm,
+  },
+  visRow: { flexDirection: 'row', gap: spacing.md },
+  visBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  visBtnOn: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+  visBtnText: { fontSize: 14, fontWeight: '800', color: colors.textSecondary },
+  visBtnTextOn: { color: colors.primary },
+
+  /* private lock badge (grid + detail) */
+  lockBadge: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderRadius: radius.pill,
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  privateChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    marginLeft: spacing.sm,
+  },
+  privateChipText: { fontSize: 12, fontWeight: '800', color: colors.textSecondary },
+
+  /* detail modal */
+  detail: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  detailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  detailHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
   detailImage: {
     width,
     height: width,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.surfaceAlt,
   },
-
-  imageCountBadge: {
-    position: 'absolute',
-    right: 16,
-    top: 18,
-    backgroundColor: 'rgba(17,24,39,0.72)',
-    borderRadius: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+  dots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
+    paddingTop: spacing.md,
   },
-
-  imageCountText: {
-    color: '#FFFFFF',
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.lineStrong,
+  },
+  dotActive: {
+    backgroundColor: colors.primary,
+    width: 18,
+  },
+  detailBody: {
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing['3xl'],
+  },
+  detailTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: spacing.md,
+  },
+  detailStore: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  detailMeta: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  detailBurn: {
+    backgroundColor: colors.coralSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
+  },
+  detailBurnText: {
+    color: colors.coralDeep,
     fontSize: 12,
     fontWeight: '800',
   },
-
-  postMetaCard: {
-    marginHorizontal: 18,
-    marginTop: 14,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+  detailCaption: {
+    fontSize: 15,
+    lineHeight: 23,
+    color: colors.textPrimary,
+    fontWeight: '500',
+    marginBottom: spacing.lg,
   },
-
-  postMetaTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  detailReceipt: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.sm,
   },
-
-  authorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-
-  authorImage: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    marginRight: 12,
-  },
-
-  authorName: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 4,
-  },
-
-  authorDate: {
-    fontSize: 13,
-    color: '#6B7280',
-    fontWeight: '600',
-  },
-
-  detailInfoSection: {
-    paddingHorizontal: 18,
-    paddingTop: 14,
-    paddingBottom: 28,
-    gap: 12,
-  },
-
-  detailInfoCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-
-  detailInfoTop: {
+  dRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 10,
-    gap: 10,
+    gap: spacing.lg,
   },
-
-  detailStoreName: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 4,
+  dLabel: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '700',
   },
-
-  detailStoreCategory: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6B7280',
+  dValue: {
+    flex: 1,
+    textAlign: 'right',
+    fontSize: 13,
+    color: colors.textPrimary,
+    fontWeight: '700',
   },
-
-  detailBurningBadge: {
-    backgroundColor: '#EEF2FF',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-
-  detailBurningBadgeText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: BRAND_BLUE,
-  },
-
-  detailStoreAddress: {
-    fontSize: 14,
-    lineHeight: 21,
-    color: '#4B5563',
-    marginBottom: 12,
-  },
-
-  detailStoreButton: {
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: BRAND_BLUE,
-    justifyContent: 'center',
+  detailPbRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginTop: spacing.sm,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
   },
-
-  detailStoreButtonText: {
-    color: '#FFFFFF',
+  detailPbLabel: {
     fontSize: 14,
     fontWeight: '800',
+    color: colors.textPrimary,
   },
-
-  detailCardLabel: {
-    fontSize: 12,
-    color: BRAND_BLUE,
+  detailPbValue: {
+    fontSize: 16,
     fontWeight: '800',
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-
-  detailSummaryText: {
-    fontSize: 22,
-    lineHeight: 30,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 8,
-  },
-
-  detailSummarySub: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#6B7280',
+    color: colors.limeInk,
   },
 });

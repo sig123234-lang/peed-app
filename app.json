@@ -12,13 +12,18 @@
       "resizeMode": "contain",
       "backgroundColor": "#0B0B0F"
     },
+    "web": {
+      "favicon": "./assets/images/favicon.png",
+      "name": "PEED",
+      "shortName": "PEED"
+    },
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#0B0B0F"
+        "backgroundColor": "#6275D8"
       },
       "package": "com.sig123234.peedapp"
     }

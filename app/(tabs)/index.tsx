@@ -1,3 +1,4 @@
+import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 import {
@@ -9,36 +10,52 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { AppButton } from '@/components/ui/kit';
+import { useShell } from '@/context/shell';
+import { APP_WIDTH, colors, gradients, radius, spacing } from '@/theme';
 import Home from './home';
 
-const { width, height } = Dimensions.get('window');
+const { height } = Dimensions.get('window');
+const width = APP_WIDTH;
 
-const BRAND_BLUE = '#4F6BFF';
 const KAKAO_YELLOW = '#FEE500';
 const KAKAO_TEXT = '#191919';
 
 const slides = [
   {
     id: 0,
+    emoji: '🍻',
     title: '어차피\n쓸 거잖아',
     description: '놀고, 먹고, 즐기고, 마시고\n이미 쓴 돈이라면 남겨봐.',
   },
   {
     id: 1,
+    emoji: '✍️',
     title: '리뷰 하나면\n충분해',
     description: '복잡한 인증 없이\n경험한 그대로 남겨봐.',
   },
   {
     id: 2,
+    emoji: '🎁',
     title: '이런 것까지\n경품으로?',
     description: '리뷰가 쌓이고 쌓이면\n상상 그 이상의 기회가 열려.',
   },
 ];
 
 export default function IndexScreen() {
+  const { authed, setAuthed } = useShell();
   const [page, setPage] = useState(0);
   const [showLogin, setShowLogin] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  // 실제 소셜 로그인 — /api/auth 로 풀페이지 리다이렉트(웹).
+  const socialLogin = (provider: 'kakao' | 'naver' | 'google') => {
+    if (typeof window === 'undefined') {
+      setAuthed(true);
+      return;
+    }
+    window.location.href = `/api/auth?action=login&provider=${provider}`;
+  };
 
   const handleNext = () => {
     if (page < slides.length - 1) {
@@ -54,7 +71,7 @@ export default function IndexScreen() {
     }
   };
 
-  if (isLoggedIn) {
+  if (authed) {
     return <Home />;
   }
 
@@ -65,7 +82,9 @@ export default function IndexScreen() {
 
         <View style={styles.loginWrap}>
           <View>
-            <Text style={styles.loginBrand}>PEED</Text>
+            <View style={styles.loginBrandRow}>
+              <Text style={styles.loginBrand}>PEED</Text>
+            </View>
             <Text style={styles.loginTitle}>
               놀고, 먹고, 즐기고, 마시고{'\n'}
               PEEDBACK 남겨봐.
@@ -78,21 +97,27 @@ export default function IndexScreen() {
 
           <View style={styles.loginBottom}>
             <TouchableOpacity
+              activeOpacity={0.9}
               style={styles.kakaoButton}
-              onPress={() => setIsLoggedIn(true)}
+              onPress={() => socialLogin('kakao')}
             >
-              <Text style={styles.kakaoButtonText}>카카오톡으로 계속하기</Text>
+              <Text style={styles.kakaoButtonText}>카카오로 시작하기</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.appleButton}
-              onPress={() => setIsLoggedIn(true)}
+              activeOpacity={0.9}
+              style={styles.naverButton}
+              onPress={() => socialLogin('naver')}
             >
-              <Text style={styles.appleButtonText}>Apple로 계속하기</Text>
+              <Text style={styles.naverButtonText}>네이버로 시작하기</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => setShowLogin(false)}>
-              <Text style={styles.backText}>온보딩으로 돌아가기</Text>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              style={styles.googleButton}
+              onPress={() => socialLogin('google')}
+            >
+              <Text style={styles.googleButtonText}>Google로 시작하기</Text>
             </TouchableOpacity>
 
             <Text style={styles.termsText}>
@@ -112,7 +137,12 @@ export default function IndexScreen() {
       <StatusBar style="dark" translucent={false} backgroundColor="#FFFFFF" />
 
       <View style={styles.topRow}>
-        <Text style={styles.brand}>PEED</Text>
+        <View style={styles.brandRow}>
+          <Text style={styles.brand}>PEED</Text>
+        </View>
+        <TouchableOpacity onPress={() => setShowLogin(true)}>
+          <Text style={styles.skipText}>건너뛰기</Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -120,14 +150,22 @@ export default function IndexScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.page}>
-          <View style={styles.heroCard}>
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>PLAY · EAT · ENTERTAIN · DRINK</Text>
+          <LinearGradient
+            colors={gradients.dusk}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.heroCard}
+          >
+            <View style={styles.heroBadge}>
+              <Text style={styles.heroBadgeText}>
+                PLAY · EAT · ENTERTAIN · DRINK
+              </Text>
             </View>
 
+            <Text style={styles.heroEmoji}>{currentSlide.emoji}</Text>
             <Text style={styles.title}>{currentSlide.title}</Text>
             <Text style={styles.description}>{currentSlide.description}</Text>
-          </View>
+          </LinearGradient>
         </View>
       </ScrollView>
 
@@ -143,18 +181,22 @@ export default function IndexScreen() {
 
         <View style={styles.buttonRow}>
           {page > 0 ? (
-            <TouchableOpacity style={styles.secondaryButton} onPress={handlePrev}>
-              <Text style={styles.secondaryButtonText}>이전</Text>
-            </TouchableOpacity>
+            <AppButton
+              label="이전"
+              variant="ghost"
+              onPress={handlePrev}
+              style={styles.prevButton}
+            />
           ) : (
             <View style={styles.secondaryButtonPlaceholder} />
           )}
 
-          <TouchableOpacity style={styles.primaryButton} onPress={handleNext}>
-            <Text style={styles.primaryButtonText}>
-              {page < slides.length - 1 ? '다음' : 'PEED 시작하기'}
-            </Text>
-          </TouchableOpacity>
+          <AppButton
+            label={page < slides.length - 1 ? '다음' : 'PEED 시작하기'}
+            variant="coral"
+            onPress={handleNext}
+            style={styles.nextButton}
+          />
         </View>
       </View>
     </SafeAreaView>
@@ -164,20 +206,43 @@ export default function IndexScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.bg,
   },
 
   topRow: {
-    paddingHorizontal: 20,
-    paddingTop: 6,
-    paddingBottom: 8,
-    alignItems: 'flex-start',
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 4,
   },
 
   brand: {
-    color: BRAND_BLUE,
+    color: colors.primary,
     fontSize: 22,
     fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+
+  brandDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: colors.coral,
+    marginBottom: 5,
+  },
+
+  skipText: {
+    color: colors.textTertiary,
+    fontSize: 14,
+    fontWeight: '700',
   },
 
   scrollContent: {
@@ -186,151 +251,166 @@ const styles = StyleSheet.create({
 
   page: {
     flex: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: spacing.xl,
     justifyContent: 'center',
     minHeight: height * 0.72,
   },
 
   heroCard: {
-    width: width - 40,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 28,
-    paddingHorizontal: 24,
-    paddingVertical: 28,
-    minHeight: height * 0.68,
+    width: width - spacing.xl * 2,
+    borderRadius: radius['2xl'],
+    paddingHorizontal: spacing['2xl'],
+    paddingVertical: spacing['3xl'],
+    minHeight: height * 0.62,
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
     alignSelf: 'center',
   },
 
-  badge: {
+  heroBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: '#EEF2FF',
-    borderRadius: 999,
-    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
     paddingVertical: 8,
-    marginBottom: 22,
+    marginBottom: spacing.xl,
   },
 
-  badgeText: {
-    color: BRAND_BLUE,
+  heroBadgeText: {
+    color: colors.white,
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+
+  heroEmoji: {
+    fontSize: 52,
+    marginBottom: spacing.md,
   },
 
   title: {
-    color: '#111111',
-    fontSize: 38,
+    color: colors.white,
+    fontSize: 40,
     fontWeight: '800',
-    lineHeight: 46,
-    marginBottom: 14,
+    lineHeight: 48,
+    marginBottom: spacing.lg,
   },
 
   description: {
-    color: '#666666',
+    color: 'rgba(255,255,255,0.85)',
     fontSize: 17,
     lineHeight: 27,
+    fontWeight: '500',
   },
 
   bottomArea: {
-    paddingHorizontal: 20,
-    paddingBottom: 26,
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing['2xl'] + 2,
   },
 
   pagination: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginBottom: 18,
+    marginBottom: spacing.lg,
   },
 
   dot: {
     width: 8,
     height: 8,
     borderRadius: 999,
-    backgroundColor: '#D1D5DB',
+    backgroundColor: colors.lineStrong,
     marginHorizontal: 4,
   },
 
   activeDot: {
     width: 24,
-    backgroundColor: BRAND_BLUE,
+    backgroundColor: colors.coral,
   },
 
   buttonRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: spacing.md,
   },
 
-  secondaryButton: {
+  prevButton: {
     flex: 1,
-    height: 56,
-    borderRadius: 18,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
 
-  secondaryButtonText: {
-    color: '#111111',
-    fontSize: 16,
-    fontWeight: '800',
+  nextButton: {
+    flex: 2,
   },
 
   secondaryButtonPlaceholder: {
     flex: 1,
   },
 
-  primaryButton: {
-    flex: 2,
-    height: 56,
-    borderRadius: 18,
-    backgroundColor: BRAND_BLUE,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  primaryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '800',
-  },
+  /* ---- login ---- */
 
   loginWrap: {
     flex: 1,
-    paddingHorizontal: 24,
-    paddingVertical: 32,
+    paddingHorizontal: spacing['2xl'],
+    paddingVertical: spacing['3xl'],
     justifyContent: 'space-between',
   },
 
+  loginBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 5,
+    marginBottom: spacing['3xl'],
+  },
+
   loginBrand: {
-    color: BRAND_BLUE,
-    fontSize: 24,
+    color: colors.primary,
+    fontSize: 26,
     fontWeight: '800',
-    marginBottom: 32,
+    letterSpacing: 0.5,
   },
 
   loginTitle: {
-    color: '#111111',
+    color: colors.textPrimary,
     fontSize: 34,
     fontWeight: '800',
     lineHeight: 44,
-    marginBottom: 16,
+    marginBottom: spacing.lg,
   },
 
   loginDesc: {
-    color: '#666666',
+    color: colors.textSecondary,
     fontSize: 16,
     lineHeight: 26,
+    fontWeight: '500',
   },
 
   loginBottom: {
-    gap: 12,
+    gap: spacing.md,
+  },
+  inviteWrap: {
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  inviteLabel: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: colors.textSecondary,
+    marginBottom: 6,
+  },
+  inviteInput: {
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingHorizontal: spacing.md,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
   },
 
   kakaoButton: {
     height: 58,
-    borderRadius: 18,
+    borderRadius: radius.lg,
     backgroundColor: KAKAO_YELLOW,
     justifyContent: 'center',
     alignItems: 'center',
@@ -342,31 +422,60 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
+  naverButton: {
+    height: 58,
+    borderRadius: radius.lg,
+    backgroundColor: '#03C75A',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  naverButtonText: {
+    color: colors.white,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  googleButton: {
+    height: 58,
+    borderRadius: radius.lg,
+    backgroundColor: colors.white,
+    borderWidth: 1.5,
+    borderColor: colors.lineStrong,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  googleButtonText: {
+    color: colors.textPrimary,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+
   appleButton: {
     height: 58,
-    borderRadius: 18,
-    backgroundColor: '#111111',
+    borderRadius: radius.lg,
+    backgroundColor: colors.ink,
     justifyContent: 'center',
     alignItems: 'center',
   },
 
   appleButtonText: {
-    color: '#FFFFFF',
+    color: colors.white,
     fontSize: 17,
     fontWeight: '800',
   },
 
   termsText: {
-    color: '#888888',
+    color: colors.textTertiary,
     fontSize: 13,
     textAlign: 'center',
-    marginTop: 8,
+    marginTop: spacing.sm,
+    lineHeight: 18,
   },
 
   backText: {
-    color: BRAND_BLUE,
+    color: colors.primary,
     fontSize: 14,
     fontWeight: '700',
     textAlign: 'center',
+    paddingVertical: spacing.sm,
   },
 });

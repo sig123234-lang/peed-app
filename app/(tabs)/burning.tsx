@@ -1,6 +1,8 @@
-import { useMemo, useRef, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Dimensions,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,264 +10,419 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import MapView, { Marker, Region } from 'react-native-maps';
 
-const { width, height } = Dimensions.get('window');
-const BRAND_BLUE = '#4F6BFF';
+import { BurningMap } from '@/components/burning/BurningMap';
+import { AppButton } from '@/components/ui/kit';
+import { BlurBackdrop } from '@/components/ui/BlurBackdrop';
+import { useReservations } from '@/context/reservations';
+import { useShell } from '@/context/shell';
+import { ReservableStore, STORES, STORE_MARKERS } from '@/data/stores';
+import { APP_WIDTH, colors, gradients, radius, shadow, spacing } from '@/theme';
 
 type BurningScreenProps = {
-  onOpenStore: () => void;
-  onPressReview: () => void;
+  onOpenStore?: () => void;
+  onPressReview?: () => void;
 };
 
-type BurningStore = {
-  id: string;
-  name: string;
-  category: string;
-  reward: number;
-  lat: number;
-  lng: number;
-  distance: string;
-  address: string;
+const DEFAULT_STORE_IMG = {
+  uri: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&q=80&auto=format&fit=crop',
 };
 
-const burningStores: BurningStore[] = [
-  {
-    id: '1',
-    name: '샤월의주방',
-    category: '요리주점',
-    reward: 10,
-    lat: 37.5578,
-    lng: 126.9246,
-    distance: '1.2km',
-    address: '서울 마포구 와우산로21길 19 2층',
-  },
-  {
-    id: '2',
-    name: '담벗',
-    category: '한식주점',
-    reward: 10,
-    lat: 37.5564,
-    lng: 126.9231,
-    distance: '1.5km',
-    address: '서울 마포구 어울마당로 54 1층',
-  },
-  {
-    id: '3',
-    name: '피드버거 연남점',
-    category: '버거',
-    reward: 10,
-    lat: 37.5611,
-    lng: 126.9258,
-    distance: '0.9km',
-    address: '서울 마포구 연남동 000-00',
-  },
-  {
-    id: '4',
-    name: '상수 하이볼클럽',
-    category: '바 · 펍',
-    reward: 10,
-    lat: 37.5488,
-    lng: 126.9225,
-    distance: '2.0km',
-    address: '서울 마포구 독막로18길 7',
-  },
-  {
-    id: '5',
-    name: '스시윤원',
-    category: '일식',
-    reward: 10,
-    lat: 37.5549,
-    lng: 126.9262,
-    distance: '1.7km',
-    address: '서울 마포구 양화로 00',
-  },
-];
+type LatLng = { lat: number; lng: number };
 
-const INITIAL_REGION: Region = {
-  latitude: 37.5578,
-  longitude: 126.9246,
-  latitudeDelta: 0.03,
-  longitudeDelta: 0.03,
-};
+// Straight-line distance (km) — good enough for "가까운 순" sorting.
+function distKm(a: LatLng, b: LatLng) {
+  const R = 6371;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((a.lat * Math.PI) / 180) *
+      Math.cos((b.lat * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
 
-export default function BurningScreen({
-  onOpenStore,
-  onPressReview,
-}: BurningScreenProps) {
-  const mapRef = useRef<MapView | null>(null);
+function StoreCard({
+  store,
+  onReserve,
+  onReview,
+  onOpen,
+  distanceKm,
+}: {
+  store: ReservableStore;
+  onReserve: () => void;
+  onReview: () => void;
+  onOpen: () => void;
+  distanceKm?: number;
+}) {
+  return (
+    <View style={styles.card}>
+      <TouchableOpacity style={styles.cardTop} onPress={onOpen} activeOpacity={0.8}>
+        <Image source={store.image} style={styles.thumb} contentFit="cover" />
+        <View style={styles.info}>
+          <View style={styles.nameRow}>
+            <Text style={styles.name} numberOfLines={1}>
+              {store.name}
+            </Text>
+            <View style={styles.burnBadge}>
+              <Text style={styles.burnBadgeText}>🔥 +{store.reward}PB</Text>
+            </View>
+          </View>
+          <Text style={styles.meta}>
+            ★ {store.rating} · {store.category}
+          </Text>
+          <Text style={styles.sub}>
+            📍 {store.location} · {store.priceRange}
+            {distanceKm != null ? `  ·  ${distanceKm.toFixed(1)}km` : ''}
+          </Text>
+        </View>
+      </TouchableOpacity>
 
+      <View style={styles.buttonRow}>
+        <AppButton
+          label="예약하기"
+          variant="coral"
+          size="sm"
+          onPress={onReserve}
+          style={{ flex: 1 }}
+        />
+        <AppButton
+          label="리뷰 쓰기"
+          variant="outline"
+          size="sm"
+          onPress={onReview}
+          style={{ flex: 1 }}
+        />
+      </View>
+    </View>
+  );
+}
+
+export default function BurningScreen({ onPressReview }: BurningScreenProps) {
+  const { openReserve } = useReservations();
+  const { openStoreDetail } = useShell();
   const [search, setSearch] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [sheetVisible, setSheetVisible] = useState(false);
-  const [region, setRegion] = useState<Region>(INITIAL_REGION);
+  const [userLoc, setUserLoc] = useState<LatLng | null>(null);
+  const [cat, setCat] = useState('전체');
+  const [areaBounds, setAreaBounds] = useState<{
+    north: number;
+    south: number;
+    east: number;
+    west: number;
+  } | null>(null);
 
-  const filteredStores = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
-
-    if (!keyword) return burningStores;
-
-    return burningStores.filter(
-      (store) =>
-        store.name.toLowerCase().includes(keyword) ||
-        store.category.toLowerCase().includes(keyword) ||
-        store.address.toLowerCase().includes(keyword)
+  // Ask for the user's location so we can show nearby stores first.
+  useEffect(() => {
+    const nav = (typeof navigator !== 'undefined' ? navigator : undefined) as any;
+    if (!nav?.geolocation) return;
+    nav.geolocation.getCurrentPosition(
+      (pos: any) =>
+        setUserLoc({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60_000 }
     );
-  }, [search]);
+  }, []);
 
-  const selectedStore =
-    filteredStores.find((store) => store.id === selectedId) ?? null;
+  // 버닝 매장 신청 (public → /api/apply → admin approval).
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [form, setForm] = useState({
+    storeName: '',
+    category: '',
+    region: '',
+    address: '',
+    contact: '',
+    applicant: '',
+    note: '',
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [submitErr, setSubmitErr] = useState('');
+  const updForm = (k: keyof typeof form) => (v: string) =>
+    setForm((p) => ({ ...p, [k]: v }));
 
-  const focusStoreToUpperArea = (store: BurningStore) => {
-    const latitudeOffset = region.latitudeDelta * 0.16;
-
-    mapRef.current?.animateToRegion(
-      {
-        latitude: store.lat - latitudeOffset,
-        longitude: store.lng,
-        latitudeDelta: region.latitudeDelta,
-        longitudeDelta: region.longitudeDelta,
-      },
-      280
-    );
+  const openApply = () => {
+    setForm({ storeName: '', category: '', region: '', address: '', contact: '', applicant: '', note: '' });
+    setSubmitted(false);
+    setSubmitErr('');
+    setApplyOpen(true);
   };
 
-  const handlePressMarker = (storeId: string) => {
-    const store = filteredStores.find((item) => item.id === storeId);
-    if (!store) return;
-
-    setSelectedId(storeId);
-    setSheetVisible(true);
-    focusStoreToUpperArea(store);
+  const submitApply = async () => {
+    if (!form.storeName.trim() || !form.region.trim() || !form.contact.trim()) {
+      setSubmitErr('매장명 · 지역 · 연락처는 필수예요.');
+      return;
+    }
+    setSubmitting(true);
+    setSubmitErr('');
+    try {
+      const r = await fetch('/api/public?action=apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (r.ok) setSubmitted(true);
+      else setSubmitErr('신청 접수에 실패했어요. 잠시 후 다시 시도해주세요.');
+    } catch {
+      setSubmitErr('신청 요청에 실패했어요.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleCloseSheet = () => {
-    setSheetVisible(false);
-  };
+  // Real (admin-approved) active burning stores from the backend.
+  const [remote, setRemote] = useState<ReservableStore[]>([]);
+  useEffect(() => {
+    fetch('/api/stores')
+      .then((r) => r.json())
+      .then((d) => {
+        const items: ReservableStore[] = (d.stores || []).map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          category: s.category || '버닝 매장',
+          location: s.location || s.region || '',
+          lat: typeof s.lat === 'number' ? s.lat : 0,
+          lng: typeof s.lng === 'number' ? s.lng : 0,
+          reward: 10,
+          rating: 0,
+          priceRange: '-',
+          image: s.image ? { uri: s.image } : DEFAULT_STORE_IMG,
+          reservable: true,
+          times: Array.isArray(s.times) ? s.times : [],
+          photos: Array.isArray(s.photos) ? s.photos : [],
+          menus: Array.isArray(s.menus) ? s.menus : [],
+          phone: s.phone || '',
+        }));
+        setRemote(items);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Merge real stores (priority) with the demo seed (deduped by name).
+  const allStores = useMemo(() => {
+    const names = new Set(remote.map((s) => s.name));
+    return [...remote, ...STORES.filter((s) => !names.has(s.name))];
+  }, [remote]);
+
+  // 카테고리 목록 — 등록 매장에서 자동 수집.
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    allStores.forEach((s) => s.category && set.add(s.category));
+    return ['전체', ...Array.from(set)];
+  }, [allStores]);
+
+  const markers = useMemo(() => {
+    const names = new Set(remote.map((s) => s.name));
+    const remoteMarkers = remote
+      .filter((s) => s.lat && s.lng)
+      .map((s) => ({ id: s.id, name: s.name, lat: s.lat, lng: s.lng, category: s.category, reward: s.reward }));
+    const staticMarkers = STORE_MARKERS.filter((m) => !names.has(m.name));
+    const all = [...remoteMarkers, ...staticMarkers];
+    return cat === '전체' ? all : all.filter((m) => m.category === cat);
+  }, [remote, cat]);
+
+  const inBounds = (s: ReservableStore) =>
+    !areaBounds ||
+    (s.lat <= areaBounds.north &&
+      s.lat >= areaBounds.south &&
+      s.lng <= areaBounds.east &&
+      s.lng >= areaBounds.west);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let base = allStores.filter((s) => (cat === '전체' ? true : s.category === cat) && inBounds(s));
+    if (q) {
+      base = base.filter(
+        (s) =>
+          s.name.toLowerCase().includes(q) ||
+          s.category.toLowerCase().includes(q) ||
+          s.location.toLowerCase().includes(q)
+      );
+    }
+    if (!userLoc) return base;
+    // Nearest first.
+    return [...base].sort((a, b) => distKm(userLoc, a) - distKm(userLoc, b));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, userLoc, allStores, cat, areaBounds]);
 
   return (
     <View style={styles.container}>
-      <MapView
-        ref={mapRef}
-        style={styles.map}
-        initialRegion={INITIAL_REGION}
-        onRegionChangeComplete={setRegion}
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
       >
-        {filteredStores.map((store) => (
-          <Marker
-            key={store.id}
-            coordinate={{ latitude: store.lat, longitude: store.lng }}
-            onPress={() => handlePressMarker(store.id)}
-            anchor={{ x: 0.5, y: 3 }}
+        <View style={styles.centerWrap}>
+          {/* hero */}
+          <LinearGradient
+            colors={gradients.dusk}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.hero}
           >
-            <Text style={styles.fireEmoji}>🔥</Text>
-          </Marker>
-        ))}
-      </MapView>
-
-      <View style={styles.topOverlay}>
-        <View style={styles.searchBar}>
-          <Text style={styles.searchBack}>←</Text>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="찾고 있는 버닝 매장이 있나요?"
-            placeholderTextColor="#9CA3AF"
-            value={search}
-            onChangeText={setSearch}
-          />
-        </View>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chipRow}
-        >
-          <TouchableOpacity style={[styles.chip, styles.chipActive]}>
-            <Text style={[styles.chipText, styles.chipTextActive]}>전체</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.chip}>
-            <Text style={styles.chipText}>맛집</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.chip}>
-            <Text style={styles.chipText}>카페</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.chip}>
-            <Text style={styles.chipText}>술집</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.chip}>
-            <Text style={styles.chipText}>데이트</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-
-      <View style={styles.leftFloating}>
-        <TouchableOpacity style={styles.roundButton}>
-          <Text style={styles.roundButtonText}>◎</Text>
-        </TouchableOpacity>
-      </View>
-
-      {sheetVisible && selectedStore && (
-        <View style={styles.sheetWrap}>
-          <View style={styles.sheetHeader}>
-            <Text style={styles.sheetTitle}>버닝 매장</Text>
-
-            <TouchableOpacity
-              style={styles.sheetCloseButton}
-              onPress={handleCloseSheet}
-            >
-              <Text style={styles.sheetCloseText}>×</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.storeCard}>
-            <View style={styles.storeInfo}>
-              <View style={styles.storeTopRow}>
-                <View>
-                  <Text style={styles.storeName}>{selectedStore.name}</Text>
-                  <Text style={styles.storeCategory}>
-                    ★ 5.0 · {selectedStore.category} · {selectedStore.distance}
-                  </Text>
-                </View>
-
-                <View style={styles.storePbBadge}>
-                  <Text style={styles.storePbBadgeText}>+10PB</Text>
-                </View>
-              </View>
-
-              <Text style={styles.storeAddress}>{selectedStore.address}</Text>
-
-              <View style={styles.storeMetaRow}>
-                <Text style={styles.storeMeta}>🕒 17:00 영업 시작</Text>
-              </View>
-              <View style={styles.storeMetaRow}>
-                <Text style={styles.storeMeta}>₩ 저녁 1 - 3만원</Text>
-              </View>
-
-              <View style={styles.actionRow}>
-                <TouchableOpacity
-                  style={styles.secondaryButton}
-                  onPress={onOpenStore}
-                >
-                  <Text style={styles.secondaryButtonText}>매장 보기</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.primaryButton}
-                  onPress={onPressReview}
-                >
-                  <Text style={styles.primaryButtonText}>리뷰 인증</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.bottomGuide}>
-            <Text style={styles.bottomGuideText}>
-              버닝 매장은 리뷰 인증 시 추가 PB를 받을 수 있는 제휴 매장이에요.
+            <Text style={styles.heroKicker}>🔥 BURNING MAP</Text>
+            <Text style={styles.heroTitle}>지금 뜨는{'\n'}버닝 매장</Text>
+            <Text style={styles.heroSub}>
+              리뷰하면 보너스 PB를 받아요
             </Text>
+          </LinearGradient>
+
+          {/* map — only PEED-registered burning stores show as pins;
+              tapping a pin opens that store's detail page */}
+          <BurningMap
+            markers={markers}
+            height={320}
+            onMarkerPress={(mk) => {
+              const store = allStores.find((s) => s.id === mk.id);
+              if (store) openStoreDetail(store);
+            }}
+            onSearchArea={(b) => setAreaBounds(b)}
+          />
+          <View style={{ height: spacing.md }} />
+
+          {/* 카테고리 필터 칩 */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipRow}
+          >
+            {categories.map((c) => (
+              <TouchableOpacity
+                key={c}
+                onPress={() => setCat(c)}
+                activeOpacity={0.85}
+                style={[styles.chip, cat === c && styles.chipOn]}
+              >
+                <Text style={[styles.chipText, cat === c && styles.chipTextOn]}>{c}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          {/* search */}
+          <View style={styles.searchBar}>
+            <Ionicons name="search" size={18} color={colors.textTertiary} />
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="매장 · 지역 · 카테고리 검색"
+              placeholderTextColor={colors.textTertiary}
+              style={styles.searchInput}
+            />
           </View>
+
+          <View style={styles.listHead}>
+            <Text style={styles.sectionTitle}>
+              {areaBounds ? '이 지역' : userLoc ? '가까운 버닝 매장' : '버닝 매장'} {filtered.length}곳
+            </Text>
+            {areaBounds && (
+              <TouchableOpacity onPress={() => setAreaBounds(null)} hitSlop={8}>
+                <Text style={styles.clearArea}>전체 보기 ✕</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {filtered.map((store) => (
+            <StoreCard
+              key={store.id}
+              store={store}
+              onReserve={() => openReserve(store)}
+              onReview={() => onPressReview?.()}
+              onOpen={() => openStoreDetail(store)}
+              distanceKm={userLoc ? distKm(userLoc, store) : undefined}
+            />
+          ))}
+
+          {filtered.length === 0 && (
+            <View style={styles.empty}>
+              <Text style={styles.emptyEmoji}>{search.trim() ? '🔍' : '🔥'}</Text>
+              <Text style={styles.emptyText}>
+                {search.trim() ? '검색 결과가 없어요' : '아직 등록된 버닝 매장이 없어요'}
+              </Text>
+            </View>
+          )}
+
+          <View style={{ height: 100 }} />
         </View>
+      </ScrollView>
+
+      {applyOpen && (
+        <BlurBackdrop onPress={() => setApplyOpen(false)}>
+          <View style={styles.applyCard}>
+            <View style={styles.applyHead}>
+              <Text style={styles.applyTitle}>버닝 매장 신청</Text>
+              <TouchableOpacity onPress={() => setApplyOpen(false)} hitSlop={8}>
+                <Ionicons name="close" size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {submitted ? (
+              <View style={styles.applyDone}>
+                <Text style={styles.applyDoneEmoji}>🎉</Text>
+                <Text style={styles.applyDoneTitle}>신청이 접수됐어요!</Text>
+                <Text style={styles.applyDoneSub}>
+                  검토 후 승인되면 버닝맵에 등록돼요.{'\n'}보통 1~2영업일 소요돼요.
+                </Text>
+                <AppButton label="닫기" variant="gradient" onPress={() => setApplyOpen(false)} style={{ marginTop: spacing.lg }} />
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+                <ApplyField label="매장명 *" value={form.storeName} onChangeText={updForm('storeName')} placeholder="예: 사케골목 홍대점" />
+                <View style={styles.applyRow}>
+                  <View style={{ flex: 1 }}>
+                    <ApplyField label="지역(시/도) *" value={form.region} onChangeText={updForm('region')} placeholder="예: 서울" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <ApplyField label="카테고리" value={form.category} onChangeText={updForm('category')} placeholder="예: 이자카야" />
+                  </View>
+                </View>
+                <ApplyField label="상세 주소" value={form.address} onChangeText={updForm('address')} placeholder="예: 마포구 어울마당로 00" />
+                <ApplyField label="연락처 *" value={form.contact} onChangeText={updForm('contact')} placeholder="예: 010-0000-0000" />
+                <ApplyField label="신청자/담당자" value={form.applicant} onChangeText={updForm('applicant')} placeholder="예: 홍길동 사장" />
+                <ApplyField label="한마디" value={form.note} onChangeText={updForm('note')} placeholder="매장 소개나 요청사항" multiline />
+
+                {submitErr ? <Text style={styles.applyErr}>⚠ {submitErr}</Text> : null}
+
+                <AppButton
+                  label={submitting ? '접수 중…' : '신청하기'}
+                  variant="gradient"
+                  disabled={submitting}
+                  onPress={submitApply}
+                  style={{ marginTop: spacing.md }}
+                />
+                <Text style={styles.applyNote}>* 표시는 필수 항목이에요.</Text>
+              </ScrollView>
+            )}
+          </View>
+        </BlurBackdrop>
       )}
+    </View>
+  );
+}
+
+function ApplyField({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  multiline,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (v: string) => void;
+  placeholder?: string;
+  multiline?: boolean;
+}) {
+  return (
+    <View style={{ marginBottom: spacing.md }}>
+      <Text style={styles.applyLabel}>{label}</Text>
+      <TextInput
+        style={[styles.applyInput, multiline && { height: 76, paddingTop: 12 }]}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={colors.textTertiary}
+        multiline={multiline}
+        textAlignVertical={multiline ? 'top' : 'center'}
+      />
     </View>
   );
 }
@@ -273,268 +430,245 @@ export default function BurningScreen({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
+  },
+  scrollContent: {
+    alignItems: 'center',
+    paddingBottom: 24,
+  },
+  centerWrap: {
+    width: APP_WIDTH,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
   },
 
-  map: {
-    width,
-    height,
+  hero: {
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    marginBottom: spacing.lg,
   },
-
-  topOverlay: {
-    position: 'absolute',
-    top: 8,
-    left: 0,
-    right: 0,
-    zIndex: 20,
+  heroKicker: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: spacing.sm,
+  },
+  heroTitle: {
+    color: colors.white,
+    fontSize: 26,
+    lineHeight: 33,
+    fontWeight: '800',
+    marginBottom: spacing.sm,
+  },
+  heroSub: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 13.5,
+    fontWeight: '600',
   },
 
   searchBar: {
-    marginHorizontal: 18,
-    marginTop: 0,
-    height: 58,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.98)',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    gap: spacing.sm,
+    height: 48,
+    borderRadius: radius.pill,
+    backgroundColor: colors.card,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+    ...shadow.soft,
   },
-
-  searchBack: {
-    fontSize: 30,
-    color: '#111827',
-    marginRight: 10,
-    marginTop: -2,
-  },
-
   searchInput: {
     flex: 1,
-    fontSize: 17,
-    color: '#111827',
-    fontWeight: '500',
+    fontSize: 14,
+    color: colors.textPrimary,
+    ...({ outlineStyle: 'none' } as object),
   },
 
-  chipRow: {
-    paddingHorizontal: 18,
-    paddingTop: 12,
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginBottom: spacing.md,
+    paddingLeft: 2,
   },
 
+  chipRow: { gap: spacing.sm, paddingVertical: 2, paddingRight: spacing.lg },
   chip: {
-    height: 42,
-    paddingHorizontal: 16,
-    borderRadius: 21,
-    backgroundColor: 'rgba(255,255,255,0.96)',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceAlt,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    justifyContent: 'center',
+    borderColor: 'transparent',
+  },
+  chipOn: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+  chipText: { fontSize: 13, fontWeight: '800', color: colors.textSecondary },
+  chipTextOn: { color: colors.primary },
+  listHead: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginRight: 8,
+    justifyContent: 'space-between',
   },
+  clearArea: { fontSize: 13, fontWeight: '800', color: colors.primary, marginBottom: spacing.md },
 
-  chipActive: {
-    backgroundColor: '#111827',
-    borderColor: '#111827',
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    ...shadow.soft,
   },
-
-  chipText: {
-    fontSize: 14,
+  cardTop: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  thumb: {
+    width: 76,
+    height: 76,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  info: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: 4,
+  },
+  name: {
+    flexShrink: 1,
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  burnBadge: {
+    backgroundColor: colors.coralSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  burnBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.coralDeep,
+  },
+  meta: {
+    fontSize: 13,
     fontWeight: '700',
-    color: '#374151',
+    color: colors.textSecondary,
+    marginBottom: 2,
   },
-
-  chipTextActive: {
-    color: '#FFFFFF',
+  sub: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: colors.textTertiary,
   },
-
-  leftFloating: {
-    position: 'absolute',
-    left: 18,
-    bottom: 110,
-    zIndex: 20,
-  },
-
-  roundButton: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  roundButtonText: {
-    fontSize: 24,
-    color: '#111827',
-    fontWeight: '800',
-  },
-
-  fireEmoji: {
-    fontSize: 30,
-    lineHeight: 34,
-  },
-
-  sheetWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 105,
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    zIndex: 25,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: -2 },
-    elevation: 6,
-    paddingHorizontal: 18,
-    paddingTop: 16,
-    paddingBottom: 12,
-  },
-
-  sheetHeader: {
+  buttonRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+
+  empty: {
     alignItems: 'center',
-    marginBottom: 12,
+    paddingVertical: spacing['3xl'],
+    gap: spacing.md,
   },
-
-  sheetTitle: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#111827',
+  emptyEmoji: {
+    fontSize: 40,
   },
-
-  sheetCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  sheetCloseText: {
-    fontSize: 24,
-    color: '#6B7280',
-    marginTop: -2,
-  },
-
-  storeCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 16,
-  },
-
-  storeInfo: {
-    flex: 1,
-  },
-
-  storeTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 10,
-    marginBottom: 10,
-  },
-
-  storeName: {
-    color: '#111827',
-    fontSize: 28,
-    fontWeight: '800',
-    marginBottom: 4,
-  },
-
-  storeCategory: {
-    color: '#6B7280',
+  emptyText: {
     fontSize: 14,
+    color: colors.textSecondary,
     fontWeight: '600',
   },
 
-  storePbBadge: {
-    backgroundColor: '#EEF2FF',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+  /* 매장 신청 CTA + 모달 */
+  applyCta: {
     alignSelf: 'flex-start',
+    marginTop: spacing.lg,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 10,
   },
-
-  storePbBadgeText: {
-    color: BRAND_BLUE,
-    fontSize: 13,
+  applyCtaText: {
+    color: colors.white,
+    fontSize: 13.5,
     fontWeight: '800',
   },
-
-  storeAddress: {
-    color: '#4B5563',
-    fontSize: 15,
-    lineHeight: 22,
-    marginBottom: 10,
+  applyCard: {
+    width: Math.min(APP_WIDTH - spacing.lg * 2, 460),
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    ...shadow.lifted,
   },
-
-  storeMetaRow: {
-    marginBottom: 4,
-  },
-
-  storeMeta: {
-    color: '#374151',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-
-  actionRow: {
+  applyHead: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
-  },
-
-  secondaryButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
   },
-
-  secondaryButtonText: {
-    color: '#374151',
-    fontSize: 15,
+  applyTitle: {
+    fontSize: 20,
     fontWeight: '800',
+    color: colors.textPrimary,
   },
-
-  primaryButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: BRAND_BLUE,
-    justifyContent: 'center',
-    alignItems: 'center',
+  applyRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
   },
-
-  primaryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-
-  bottomGuide: {
-    paddingTop: 10,
-    paddingBottom: 2,
-  },
-
-  bottomGuideText: {
+  applyLabel: {
     fontSize: 13,
-    lineHeight: 18,
-    color: '#6B7280',
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: 5,
+  },
+  applyInput: {
+    height: 46,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.md,
+    fontSize: 14.5,
+    color: colors.textPrimary,
+    ...({ outlineStyle: 'none' } as object),
+  },
+  applyErr: {
+    color: colors.danger,
+    fontWeight: '700',
+    fontSize: 13,
+    marginTop: spacing.sm,
+  },
+  applyNote: {
+    fontSize: 11.5,
+    color: colors.textTertiary,
     fontWeight: '600',
     textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+  applyDone: {
+    alignItems: 'center',
+    paddingVertical: spacing.xl,
+  },
+  applyDoneEmoji: { fontSize: 44, marginBottom: spacing.sm },
+  applyDoneTitle: {
+    fontSize: 19,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginBottom: spacing.sm,
+  },
+  applyDoneSub: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });

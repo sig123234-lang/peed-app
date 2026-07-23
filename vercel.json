@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "expo export --platform web && node scripts/inject-splash.js",
+  "outputDirectory": "dist",
+  "framework": null,
+  "rewrites": [
+    { "source": "/api/auth/callback/:provider", "destination": "/api/auth?cb=1&provider=:provider" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}

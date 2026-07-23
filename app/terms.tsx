@@ -1,13 +1,38 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import {
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { APP_WIDTH, colors, radius, shadow, spacing } from '@/theme';
+
+const SECTIONS: { title: string; body: string }[] = [
+  {
+    title: '제1조 (목적)',
+    body: '본 약관은 PEED 서비스의 이용 조건 및 운영 기준을 정하는 것을 목적으로 합니다.',
+  },
+  {
+    title: '제2조 (서비스 내용)',
+    body: '사용자는 리뷰 작성, PB 적립, 경품 응모, 당첨 확인, 미니게임 참여 등의 기능을 이용할 수 있습니다.',
+  },
+  {
+    title: '제3조 (PB 적립·사용)',
+    body: 'PB는 리뷰 인증·초대·방문 등으로 적립되며, 경품 응모와 미니게임에 사용됩니다. 부정 적립이 확인되면 회수될 수 있습니다.',
+  },
+  {
+    title: '제4조 (리뷰 인증)',
+    body: '외부 리뷰에 인증 키워드(PEED) 또는 피드))를 포함해 작성하고, 해당 화면을 인증해야 보상이 지급됩니다.',
+  },
+  {
+    title: '제5조 (유의사항)',
+    body: '허위 리뷰, 중복·부정 응모, 비정상 활동이 확인될 경우 보상이 취소되거나 서비스 이용이 제한될 수 있습니다.',
+  },
+  {
+    title: '제6조 (예약·노쇼)',
+    body: '예약 시 일부 PB가 보증금으로 잠기며, 방문 완료 시 반환됩니다. 노쇼가 반복되면 예약이 제한될 수 있습니다.',
+  },
+];
 
 export default function TermsScreen() {
   const router = useRouter();
@@ -15,35 +40,27 @@ export default function TermsScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
-
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.back}>←</Text>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
+          <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>이용약관</Text>
-        <View style={{ width: 24 }} />
+        <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.contentContainer}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>제1조 목적</Text>
-          <Text style={styles.body}>
-            본 약관은 PEED 서비스의 이용 조건 및 운영 기준을 정하는 것을 목적으로 합니다.
-          </Text>
-
-          <Text style={styles.sectionTitle}>제2조 서비스 내용</Text>
-          <Text style={styles.body}>
-            사용자는 리뷰 작성, PB 적립, 경품 응모, 당첨 확인 등의 기능을 이용할 수 있습니다.
-          </Text>
-
-          <Text style={styles.sectionTitle}>제3조 유의사항</Text>
-          <Text style={styles.body}>
-            허위 리뷰, 부정 응모, 비정상 활동이 확인될 경우 서비스 이용이 제한될 수 있습니다.
-          </Text>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.center}>
+          <Text style={styles.updated}>최종 개정일 2026.07.20</Text>
+          <View style={styles.card}>
+            {SECTIONS.map((s, i) => (
+              <View key={s.title} style={[styles.section, i > 0 && styles.sectionBorder]}>
+                <Text style={styles.sectionTitle}>{s.title}</Text>
+                <Text style={styles.body}>{s.body}</Text>
+              </View>
+            ))}
+          </View>
+          <Text style={styles.footer}>문의: help@peed.co.kr</Text>
+          <View style={{ height: 24 }} />
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -51,38 +68,37 @@ export default function TermsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F7F8FA' },
+  container: { flex: 1, backgroundColor: colors.surface },
   header: {
-    height: 56,
-    paddingHorizontal: 18,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.line,
+    backgroundColor: colors.bg,
   },
-  back: { fontSize: 28, color: '#111827', fontWeight: '700' },
-  headerTitle: { fontSize: 22, fontWeight: '800', color: '#111827' },
-  scroll: { flex: 1 },
-  contentContainer: { padding: 18, paddingBottom: 40 },
+  backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: 17, fontWeight: '800', color: colors.textPrimary },
+  content: { alignItems: 'center', paddingTop: spacing.lg },
+  center: { width: APP_WIDTH, paddingHorizontal: spacing.lg },
+  updated: { fontSize: 12.5, fontWeight: '700', color: colors.textTertiary, marginBottom: spacing.md, paddingLeft: spacing.xs },
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.lg,
+    ...shadow.soft,
   },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 8,
-    marginTop: 12,
-  },
-  body: {
-    fontSize: 14,
-    lineHeight: 22,
-    color: '#6B7280',
+  section: { paddingVertical: spacing.lg },
+  sectionBorder: { borderTopWidth: 1, borderTopColor: colors.line },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: colors.textPrimary, marginBottom: 6 },
+  body: { fontSize: 14, lineHeight: 22, color: colors.textSecondary, fontWeight: '500' },
+  footer: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: colors.textTertiary,
+    textAlign: 'center',
+    marginTop: spacing.lg,
   },
 });

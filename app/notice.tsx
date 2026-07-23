@@ -1,101 +1,154 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import {
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from 'react-native';
+import { useState } from 'react';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const notices = [
+import { APP_WIDTH, colors, radius, shadow, spacing } from '@/theme';
+
+type Notice = {
+  id: string;
+  title: string;
+  date: string;
+  content: string;
+  tag: string;
+  pinned?: boolean;
+};
+
+const NOTICES: Notice[] = [
+  {
+    id: '3',
+    title: 'PB 대결 미니게임 오픈',
+    date: '2026.07.20',
+    tag: '업데이트',
+    content:
+      'PB를 걸고 겨루는 미니게임(가위바위보·스피드 퀴즈·라스트맨)이 열렸어요. 플레이 탭에서 랜덤 매칭으로 바로 즐겨보세요.',
+    pinned: true,
+  },
+  {
+    id: '2',
+    title: '버닝맵 개편 안내',
+    date: '2026.07.15',
+    tag: '업데이트',
+    content:
+      '지도에 매장 이름·리워드가 표시되고, 카테고리 필터와 "이 지역 검색"이 추가됐어요. 카카오맵·길찾기 연동도 지원해요.',
+  },
   {
     id: '1',
-    title: 'PEED 오픈 안내',
+    title: 'PEED 정식 오픈',
     date: '2026.04.14',
-    summary: '피드 서비스가 정식 오픈되었습니다.',
+    tag: '공지',
     content:
-      '피드 서비스가 정식 오픈되었습니다. 버닝 매장 방문 후 리뷰를 남기고 PB를 받아보세요.',
-    isPinned: true,
+      '버닝 매장 방문 후 리뷰를 남기고 PB를 받아보세요. 모은 PB로 경품에 응모하거나 미니게임에 참여할 수 있어요.',
   },
 ];
 
 export default function NoticeScreen() {
   const router = useRouter();
+  const [open, setOpen] = useState<string | null>(NOTICES.find((n) => n.pinned)?.id ?? null);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
-
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.back}>←</Text>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
+          <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>공지사항</Text>
-        <View style={{ width: 24 }} />
+        <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.contentContainer}
-        showsVerticalScrollIndicator={false}
-      >
-        {notices.map((notice) => (
-          <View key={notice.id} style={styles.card}>
-            <View style={styles.topRow}>
-              <View style={styles.badgeWrap}>
-                {notice.isPinned ? <Text style={styles.pinned}>고정</Text> : null}
-                <Text style={styles.date}>{notice.date}</Text>
-              </View>
-            </View>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.center}>
+          {NOTICES.map((n) => {
+            const isOpen = open === n.id;
+            return (
+              <TouchableOpacity
+                key={n.id}
+                activeOpacity={0.9}
+                onPress={() => setOpen(isOpen ? null : n.id)}
+                style={styles.card}
+              >
+                <View style={styles.metaRow}>
+                  <View style={[styles.tag, n.pinned && styles.tagPinned]}>
+                    <Text style={[styles.tagText, n.pinned && styles.tagTextPinned]}>
+                      {n.pinned ? '📌 고정' : n.tag}
+                    </Text>
+                  </View>
+                  <Text style={styles.date}>{n.date}</Text>
+                </View>
 
-            <Text style={styles.title}>{notice.title}</Text>
-            <Text style={styles.summary}>{notice.summary}</Text>
-            <Text style={styles.content}>{notice.content}</Text>
-          </View>
-        ))}
+                <View style={styles.titleRow}>
+                  <Text style={styles.title}>{n.title}</Text>
+                  <Ionicons
+                    name={isOpen ? 'chevron-up' : 'chevron-down'}
+                    size={18}
+                    color={colors.textTertiary}
+                  />
+                </View>
+
+                {isOpen && <Text style={styles.body}>{n.content}</Text>}
+              </TouchableOpacity>
+            );
+          })}
+          <View style={{ height: 24 }} />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F7F8FA' },
+  container: { flex: 1, backgroundColor: colors.surface },
   header: {
-    height: 56,
-    paddingHorizontal: 18,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.line,
+    backgroundColor: colors.bg,
   },
-  back: { fontSize: 28, color: '#111827', fontWeight: '700' },
-  headerTitle: { fontSize: 22, fontWeight: '800', color: '#111827' },
-  scroll: { flex: 1 },
-  contentContainer: { padding: 18, paddingBottom: 40, gap: 12 },
+  backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: 17, fontWeight: '800', color: colors.textPrimary },
+  content: { alignItems: 'center', paddingTop: spacing.lg },
+  center: { width: APP_WIDTH, paddingHorizontal: spacing.lg, gap: spacing.md },
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    ...shadow.soft,
   },
-  topRow: { marginBottom: 10 },
-  badgeWrap: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  pinned: {
-    backgroundColor: '#EEF2FF',
-    color: '#4F6BFF',
-    fontSize: 11,
-    fontWeight: '800',
-    paddingHorizontal: 8,
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  tag: {
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
     paddingVertical: 4,
-    borderRadius: 999,
   },
-  date: { color: '#9CA3AF', fontSize: 12, fontWeight: '700' },
-  title: { fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 8 },
-  summary: { fontSize: 14, color: '#4B5563', marginBottom: 10, fontWeight: '700' },
-  content: { fontSize: 14, lineHeight: 21, color: '#6B7280' },
+  tagPinned: { backgroundColor: colors.primarySoft },
+  tagText: { fontSize: 11.5, fontWeight: '800', color: colors.textSecondary },
+  tagTextPinned: { color: colors.primary },
+  date: { fontSize: 12.5, fontWeight: '700', color: colors.textTertiary },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  title: { flex: 1, fontSize: 16, fontWeight: '800', color: colors.textPrimary },
+  body: {
+    fontSize: 14,
+    lineHeight: 22,
+    color: colors.textSecondary,
+    fontWeight: '500',
+    marginTop: spacing.md,
+  },
 });

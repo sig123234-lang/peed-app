@@ -1,21 +1,36 @@
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Alert,
-    Dimensions,
-    FlatList,
-    Image,
-    Modal,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Alert,
+  FlatList,
+  Image,
+  Modal,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
 } from 'react-native';
 
-const { width } = Dimensions.get('window');
+import { AppButton, GradientHeader, ProgressBar } from '@/components/ui/kit';
+import { usePb } from '@/context/pb';
+import { useIsDesktop } from '@/hooks/use-is-desktop';
+import { APP_WIDTH, colors, radius, shadow, spacing } from '@/theme';
 
-const BRAND_BLUE = '#4F6BFF';
-const CARD_WIDTH = width - 56;
+const width = APP_WIDTH;
+
+// 가운데 정렬 캐러셀: 카드 양옆 여백(SIDE)만큼 이전/다음 카드가 살짝 보이고,
+// 스냅하면 항상 카드가 화면 중앙에 온다.
+const SIDE = 30; // 양옆 여백 (peek)
+const GAP = 12; // 카드 사이 간격
+const CARD_WIDTH = width - SIDE * 2;
+const SNAP = CARD_WIDTH + GAP;
+
+const DEFAULT_PRIZE_IMG = {
+  uri: 'https://images.unsplash.com/photo-1607082349566-187342175e2f?w=800&q=80&auto=format&fit=crop',
+};
+const comma = (n: number) => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
 type PrizeItem = {
   id: string;
@@ -30,36 +45,14 @@ type PrizeItem = {
   announcementDate: string;
 };
 
-const initialPrizes: PrizeItem[] = [
-  {
-    id: 'iphone17pro',
-    name: '아이폰 17 PRO',
-    priceLabel: '₩1,790,000',
-    pbCost: 40,
-    image: require('../../assets/images/iphone17pro.jpg'),
-    totalEntries: 128,
-    myEntries: 0,
-    winnerCount: 1,
-    maxEntries: 200,
-    announcementDate: '4월 20일',
-  },
-  {
-    id: 'hotelvoucher',
-    name: '프리미엄 호텔 상품권 10만원',
-    priceLabel: '₩100,000',
-    pbCost: 10,
-    image: require('../../assets/images/hotel-voucher.png'),
-    totalEntries: 274,
-    myEntries: 0,
-    winnerCount: 3,
-    maxEntries: 350,
-    announcementDate: '4월 14일',
-  },
-];
+// 실 사용 전환 — 데모 경품 제거. 실제 경품은 서버(/api/products)에서만 온다.
+const initialPrizes: PrizeItem[] = [];
 
-const getWinRate = (my: number, max: number, winners: number) => {
-  if (!my || !max) return '0%';
-  const rate = (my / max) * winners * 100;
+// Approximate win chance against the *actual* entry pool (total entries),
+// scaled by the number of winners, capped at 100%.
+const getWinRate = (my: number, total: number, winners: number) => {
+  if (!my || !total) return '0%';
+  const rate = Math.min(100, (my / total) * winners * 100);
   return `${rate.toFixed(1)}%`;
 };
 
@@ -72,18 +65,53 @@ function MetaItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function PeedScreen() {
+export default function PeedScreen({ embedded = false }: { embedded?: boolean }) {
+  const { pb, setBalance } = usePb();
+  const isDesktop = useIsDesktop();
+  const { height: winH } = useWindowDimensions();
+  // 경품 이미지 높이를 화면 높이에 맞춰 유연하게 (작은 폰에선 작게, 큰 폰/태블릿엔 크게).
+  const cardImageHeight = Math.round(Math.min(220, Math.max(120, winH * 0.2)));
+
   const [prizes, setPrizes] = useState<PrizeItem[]>(initialPrizes);
-  const [currentIndex, setCurrentIndex] = useState(0);
 
   const [applyModalVisible, setApplyModalVisible] = useState(false);
-  const [cancelModalVisible, setCancelModalVisible] = useState(false);
 
   const [selectedPrizeId, setSelectedPrizeId] = useState<string | null>(null);
   const [applyCount, setApplyCount] = useState(1);
-  const [cancelCount, setCancelCount] = useState(1);
 
   const flatListRef = useRef<FlatList>(null);
+
+  // 관리자 경품 + 서버의 실제 응모 수(전체/내 응모)를 합쳐서 로드.
+  const loadPrizes = useCallback(async () => {
+    try {
+      const [pr, rs] = await Promise.all([
+        fetch('/api/products').then((r) => r.json()),
+        fetch('/api/public?action=raffleState', { credentials: 'include' })
+          .then((r) => r.json())
+          .catch(() => ({})),
+      ]);
+      const my = (rs && rs.myEntries) || {};
+      const tot = (rs && rs.totals) || {};
+      const items: PrizeItem[] = (pr.products || []).map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        priceLabel: `₩${comma(Number(p.price) || 0)}`,
+        pbCost: Number(p.pbCost) || 0,
+        image: p.image ? { uri: p.image } : DEFAULT_PRIZE_IMG,
+        totalEntries: (tot[p.id] != null ? tot[p.id] : Number(p.totalEntries)) || 0,
+        myEntries: my[p.id] || 0,
+        winnerCount: Number(p.winners) || 1,
+        maxEntries: Number(p.stock) || 100,
+        announcementDate: p.announcementDate || '-',
+      }));
+      if (items.length) setPrizes(items);
+    } catch {
+      // ignore
+    }
+  }, []);
+  useEffect(() => {
+    loadPrizes();
+  }, [loadPrizes]);
 
   const selectedPrize =
     prizes.find((item) => item.id === selectedPrizeId) ?? null;
@@ -97,31 +125,24 @@ export default function PeedScreen() {
       return;
     }
 
+    if (pb < target.pbCost) {
+      Alert.alert(
+        'PB 부족',
+        `1회 응모에 ${target.pbCost}PB가 필요해요.\n현재 보유: ${pb}PB\n리뷰를 남기고 PB를 모아보세요.`
+      );
+      return;
+    }
+
     setSelectedPrizeId(prizeId);
     setApplyCount(1);
     setApplyModalVisible(true);
   };
 
-  const openCancelModal = (prizeId: string) => {
-    const target = prizes.find((item) => item.id === prizeId);
-
-    if (!target || target.myEntries <= 0) {
-      Alert.alert('알림', '취소할 응모 내역이 없어요.');
-      return;
-    }
-
-    setSelectedPrizeId(prizeId);
-    setCancelCount(1);
-    setCancelModalVisible(true);
-  };
-
-  const handleApplyConfirm = () => {
+  const handleApplyConfirm = async () => {
     if (!selectedPrize) return;
 
     if (selectedPrize.totalEntries + applyCount > selectedPrize.maxEntries) {
-      const remainingEntries =
-        selectedPrize.maxEntries - selectedPrize.totalEntries;
-
+      const remainingEntries = selectedPrize.maxEntries - selectedPrize.totalEntries;
       Alert.alert(
         '응모 불가',
         remainingEntries > 0
@@ -131,163 +152,182 @@ export default function PeedScreen() {
       return;
     }
 
-    setPrizes((prev) =>
-      prev.map((item) =>
-        item.id === selectedPrize.id
-          ? {
-              ...item,
-              myEntries: item.myEntries + applyCount,
-              totalEntries: item.totalEntries + applyCount,
-            }
-          : item
-      )
-    );
-
+    const prize = selectedPrize;
     setApplyModalVisible(false);
 
-    Alert.alert(
-      '응모 완료',
-      `${selectedPrize.name}에 ${applyCount}회 응모했어요.`
-    );
-  };
-
-  const handleCancelConfirm = () => {
-    if (!selectedPrize) return;
-
-    if (selectedPrize.myEntries < cancelCount) {
-      Alert.alert('취소 불가', '내 응모 횟수보다 많이 취소할 수 없어요.');
-      return;
+    // 서버에서 실제 PB 차감 + 응모 기록(진짜 응모). 응모는 확정되면 취소 불가.
+    try {
+      const r = await fetch('/api/public?action=enterRaffle', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId: prize.id, count: applyCount }),
+      });
+      const d = await r.json();
+      if (!d.ok) {
+        if (d.error === 'insufficient_pb') {
+          if (typeof d.balance === 'number') setBalance(d.balance);
+          Alert.alert('PB 부족', `이 응모에는 ${prize.pbCost * applyCount}PB가 필요해요.`);
+        } else {
+          Alert.alert('응모 실패', '잠시 후 다시 시도해 주세요.');
+        }
+        return;
+      }
+      setBalance(d.balance);
+      setPrizes((prev) =>
+        prev.map((item) =>
+          item.id === prize.id
+            ? { ...item, myEntries: d.myEntries, totalEntries: d.totalEntries }
+            : item
+        )
+      );
+      Alert.alert('응모 완료', `${prize.name}에 ${applyCount}회 응모했어요.\n남은 PB ${d.balance}PB`);
+    } catch {
+      Alert.alert('응모 실패', '네트워크 오류로 응모하지 못했어요.');
     }
-
-    setPrizes((prev) =>
-      prev.map((item) =>
-        item.id === selectedPrize.id
-          ? {
-              ...item,
-              myEntries: item.myEntries - cancelCount,
-              totalEntries: Math.max(0, item.totalEntries - cancelCount),
-            }
-          : item
-      )
-    );
-
-    setCancelModalVisible(false);
-
-    Alert.alert(
-      '응모 취소 완료',
-      `${selectedPrize.name} 응모 ${cancelCount}회를 취소했어요.`
-    );
   };
 
-  const onMomentumScrollEnd = (event: any) => {
-    const x = event.nativeEvent.contentOffset.x;
-    const nextIndex = Math.round(x / CARD_WIDTH);
-    setCurrentIndex(nextIndex);
-  };
 
-  const renderPrizeCard = ({ item }: { item: PrizeItem }) => {
+  const renderCardBody = (item: PrizeItem) => {
     const isSoldOut = item.totalEntries >= item.maxEntries;
+    const fillRate = item.maxEntries ? item.totalEntries / item.maxEntries : 0;
 
     return (
-      <View style={styles.slideCard}>
-        <View style={styles.prizeImageWrap}>
-          <Image
-            source={item.image}
-            style={styles.prizeImage}
-            resizeMode="contain"
-          />
-        </View>
-
-        <View style={styles.infoCard}>
-          <View style={styles.titleRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.prizeName}>{item.name}</Text>
-              <Text style={styles.priceText}>시가 {item.priceLabel}</Text>
+      <View style={styles.prizeCard}>
+          <GradientHeader
+            variant="brandDiagonal"
+            rounded={false}
+            style={styles.hotStrip}
+          >
+            <Text style={styles.hotStripLabel}>✦ HOT DROP</Text>
+            <View style={styles.pbCostPill}>
+              <Text style={styles.pbCostPillText}>{item.pbCost} PB</Text>
             </View>
+          </GradientHeader>
 
-            <View style={styles.pbBadge}>
-              <Text style={styles.pbBadgeText}>{item.pbCost}PB</Text>
-            </View>
-          </View>
-
-          <View style={styles.metaGrid}>
-            <MetaItem label="가능한 응모" value={`${item.maxEntries}회`} />
-            <MetaItem label="내 응모" value={`${item.myEntries}회`} />
-            <MetaItem label="총 응모" value={`${item.totalEntries}회`} />
-            <MetaItem label="당첨 인원" value={`${item.winnerCount}명`} />
-            <MetaItem label="발표일" value={item.announcementDate} />
-            <MetaItem
-              label="당첨 확률"
-              value={getWinRate(
-                item.myEntries,
-                item.maxEntries,
-                item.winnerCount
-              )}
+          <View style={[styles.prizeImageWrap, { height: cardImageHeight }]}>
+            <Image
+              source={item.image}
+              style={styles.prizeImage}
+              resizeMode="contain"
             />
           </View>
 
-          <View style={styles.buttonRow}>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => openCancelModal(item.id)}
-            >
-              <Text style={styles.cancelButtonText}>응모 취소</Text>
-            </TouchableOpacity>
+          <View style={styles.infoPad}>
+            <Text style={styles.prizeName}>{item.name}</Text>
+            <Text style={styles.priceText}>시가 {item.priceLabel}</Text>
 
-            <TouchableOpacity
-              style={[styles.applyButton, isSoldOut && styles.applyButtonDisabled]}
-              onPress={() => {
-                if (!isSoldOut) openApplyModal(item.id);
-              }}
-              disabled={item.totalEntries >= item.maxEntries}
-            >
-              <Text
-                style={[
-                  styles.applyButtonText,
-                  isSoldOut && styles.applyButtonTextDisabled,
-                ]}
-              >
-                {isSoldOut ? '응모 마감' : '응모하기'}
+            <View style={styles.progressRow}>
+              <ProgressBar value={fillRate} style={styles.progressBar} />
+              <Text style={styles.progressLabel}>
+                {item.totalEntries}/{item.maxEntries}
               </Text>
-            </TouchableOpacity>
+            </View>
+
+            <View style={styles.metaGrid}>
+              <MetaItem label="내 응모" value={`${item.myEntries}회`} />
+              <MetaItem label="당첨 인원" value={`${item.winnerCount}명`} />
+              <MetaItem label="발표일" value={item.announcementDate} />
+              <MetaItem
+                label="당첨 확률"
+                value={getWinRate(
+                  item.myEntries,
+                  item.totalEntries,
+                  item.winnerCount
+                )}
+              />
+            </View>
+
+            <View style={styles.buttonRow}>
+              <AppButton
+                label={isSoldOut ? '응모 마감' : '응모하기'}
+                variant="coral"
+                size="md"
+                disabled={isSoldOut}
+                onPress={() => openApplyModal(item.id)}
+                style={styles.applyBtn}
+              />
+            </View>
           </View>
         </View>
-      </View>
     );
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+  const headerEl = (
+    <View style={styles.header}>
+      <View>
+        <Text style={styles.headerKicker}>PEED DROP</Text>
         <Text style={styles.headerTitle}>응모 가능한 경품</Text>
       </View>
-
-      <FlatList
-        ref={flatListRef}
-        data={prizes}
-        keyExtractor={(item) => item.id}
-        renderItem={renderPrizeCard}
-        horizontal
-        pagingEnabled
-        snapToInterval={CARD_WIDTH}
-        decelerationRate="fast"
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.sliderContent}
-        onMomentumScrollEnd={onMomentumScrollEnd}
-      />
-
-      <View style={styles.pagination}>
-        {prizes.map((item, index) => (
-          <View
-            key={item.id}
-            style={[
-              styles.dot,
-              currentIndex === index && styles.dotActive,
-            ]}
-          />
-        ))}
+      <View style={styles.pbBalancePill}>
+        <Text style={styles.pbBalanceEmoji}>💎</Text>
+        <Text style={styles.pbBalanceText}>{pb} PB</Text>
       </View>
+    </View>
+  );
 
+  const emptyEl = (
+    <View style={styles.emptyPrize}>
+      <Text style={styles.emptyPrizeEmoji}>🎁</Text>
+      <Text style={styles.emptyPrizeTitle}>준비 중인 경품이 없어요</Text>
+      <Text style={styles.emptyPrizeSub}>
+        곧 새로운 경품이 올라와요.{'\n'}리뷰를 남기고 PB를 모아 두세요!
+      </Text>
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={styles.container}>
+      {isDesktop ? (
+        // Desktop — use the width: a responsive grid instead of a phone slider.
+        <ScrollView
+          style={{ width: '100%' }}
+          contentContainerStyle={styles.desktopScroll}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.desktopWrap}>
+            {!embedded && headerEl}
+            {prizes.length === 0 ? (
+              emptyEl
+            ) : (
+              <View style={styles.grid}>
+                {prizes.map((item) => (
+                  <View key={item.id} style={styles.gridCell}>
+                    {renderCardBody(item)}
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        </ScrollView>
+      ) : (
+        <View style={styles.stage}>
+          {!embedded && headerEl}
+
+          {prizes.length === 0 ? (
+            emptyEl
+          ) : (
+            <FlatList
+              ref={flatListRef}
+              style={{ flex: 1 }}
+              data={prizes}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <View style={styles.slideCard}>{renderCardBody(item)}</View>
+              )}
+              horizontal
+              snapToInterval={SNAP}
+              snapToAlignment="start"
+              disableIntervalMomentum
+              decelerationRate="fast"
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.sliderContent}
+            />
+          )}
+        </View>
+      )}
+
+      {/* ---- apply modal ---- */}
       <Modal
         transparent
         animationType="fade"
@@ -296,7 +336,7 @@ export default function PeedScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>응모하시겠습니까?</Text>
+            <Text style={styles.modalTitle}>응모하시겠어요?</Text>
 
             {selectedPrize && (
               <>
@@ -308,13 +348,14 @@ export default function PeedScreen() {
                   남은 응모 가능 횟수:{' '}
                   {selectedPrize.maxEntries - selectedPrize.totalEntries}회
                 </Text>
+                <Text style={styles.modalDesc}>보유 PB: {pb}PB</Text>
 
                 <View style={styles.counterBox}>
                   <TouchableOpacity
                     style={styles.counterButton}
                     onPress={() => setApplyCount((prev) => Math.max(1, prev - 1))}
                   >
-                    <Text style={styles.counterButtonText}>-</Text>
+                    <Text style={styles.counterButtonText}>−</Text>
                   </TouchableOpacity>
 
                   <Text style={styles.counterValue}>{applyCount}</Text>
@@ -326,102 +367,45 @@ export default function PeedScreen() {
 
                       const remainingEntries =
                         selectedPrize.maxEntries - selectedPrize.totalEntries;
+                      const maxAffordable = Math.floor(pb / selectedPrize.pbCost);
+                      const cap = Math.min(remainingEntries, maxAffordable);
 
-                      setApplyCount((prev) => Math.min(remainingEntries, prev + 1));
+                      setApplyCount((prev) => Math.min(cap, prev + 1));
                     }}
                   >
                     <Text style={styles.counterButtonText}>+</Text>
                   </TouchableOpacity>
                 </View>
 
-                <Text style={styles.totalPbText}>
-                  총 사용 PB: {selectedPrize.pbCost * applyCount}PB
-                </Text>
-              </>
-            )}
-
-            <View style={styles.modalButtonRow}>
-              <TouchableOpacity
-                style={styles.modalCancelButton}
-                onPress={() => setApplyModalVisible(false)}
-              >
-                <Text style={styles.modalCancelButtonText}>취소</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.modalApplyButton}
-                onPress={handleApplyConfirm}
-              >
-                <Text style={styles.modalApplyButtonText}>응모하기</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        transparent
-        animationType="fade"
-        visible={cancelModalVisible}
-        onRequestClose={() => setCancelModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>응모를 취소하시겠습니까?</Text>
-
-            {selectedPrize && (
-              <>
-                <Text style={styles.modalPrizeName}>{selectedPrize.name}</Text>
-                <Text style={styles.modalDesc}>
-                  현재 내 응모: {selectedPrize.myEntries}회
-                </Text>
-
-                <View style={styles.counterBox}>
-                  <TouchableOpacity
-                    style={styles.counterButton}
-                    onPress={() => setCancelCount((prev) => Math.max(1, prev - 1))}
-                  >
-                    <Text style={styles.counterButtonText}>-</Text>
-                  </TouchableOpacity>
-
-                  <Text style={styles.counterValue}>{cancelCount}</Text>
-
-                  <TouchableOpacity
-                    style={styles.counterButton}
-                    onPress={() =>
-                      setCancelCount((prev) =>
-                        Math.min(selectedPrize.myEntries, prev + 1)
-                      )
-                    }
-                  >
-                    <Text style={styles.counterButtonText}>+</Text>
-                  </TouchableOpacity>
+                <View style={styles.totalPbBox}>
+                  <Text style={styles.totalPbLabel}>총 사용 PB</Text>
+                  <Text style={styles.totalPbValue}>
+                    {selectedPrize.pbCost * applyCount}PB
+                  </Text>
                 </View>
-
-                <Text style={styles.totalPbText}>
-                  반환 PB: {selectedPrize.pbCost * cancelCount}PB
-                </Text>
               </>
             )}
 
             <View style={styles.modalButtonRow}>
-              <TouchableOpacity
-                style={styles.modalCancelButton}
-                onPress={() => setCancelModalVisible(false)}
-              >
-                <Text style={styles.modalCancelButtonText}>닫기</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.modalApplyButton}
-                onPress={handleCancelConfirm}
-              >
-                <Text style={styles.modalApplyButtonText}>응모 취소</Text>
-              </TouchableOpacity>
+              <AppButton
+                label="취소"
+                variant="ghost"
+                size="md"
+                onPress={() => setApplyModalVisible(false)}
+                style={{ flex: 1 }}
+              />
+              <AppButton
+                label="응모하기"
+                variant="coral"
+                size="md"
+                onPress={handleApplyConfirm}
+                style={{ flex: 1 }}
+              />
             </View>
           </View>
         </View>
       </Modal>
+
     </SafeAreaView>
   );
 }
@@ -429,42 +413,152 @@ export default function PeedScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F7F8FA',
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+  },
+  stage: {
+    width: APP_WIDTH,
+    flex: 1,
+  },
+
+  /* empty state */
+  emptyPrize: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing['3xl'],
+    gap: spacing.sm,
+  },
+  emptyPrizeEmoji: {
+    fontSize: 44,
+    marginBottom: spacing.xs,
+  },
+  emptyPrizeTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  emptyPrizeSub: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+
+  /* desktop grid */
+  desktopScroll: {
+    alignItems: 'center',
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing['3xl'],
+  },
+  desktopWrap: {
+    width: '100%',
+    maxWidth: 540,
+  },
+  grid: {
+    marginTop: spacing.md,
+    gap: spacing.xl,
+  },
+  gridCell: {
+    width: '100%',
   },
 
   header: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 10,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  headerKicker: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 2,
   },
 
   headerTitle: {
-    color: '#111827',
+    color: colors.textPrimary,
     fontSize: 26,
     fontWeight: '800',
   },
 
+  pbBalancePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+  },
+
+  pbBalanceEmoji: {
+    fontSize: 13,
+  },
+
+  pbBalanceText: {
+    color: colors.primary,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+
   sliderContent: {
-    paddingLeft: 20,
-    paddingRight: 36,
+    paddingHorizontal: SIDE,
+    paddingTop: spacing.sm,
   },
 
   slideCard: {
     width: CARD_WIDTH,
-    marginRight: 16,
+    marginRight: GAP,
+  },
+
+  prizeCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    ...shadow.card,
+  },
+
+  hotStrip: {
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+
+  hotStripLabel: {
+    color: colors.white,
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+
+  pbCostPill: {
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
+  },
+
+  pbCostPillText: {
+    color: colors.white,
+    fontSize: 13,
+    fontWeight: '800',
   },
 
   prizeImageWrap: {
-    width: '100%',
-    height: 250,
-    borderRadius: 28,
-    backgroundColor: '#FFFFFF',
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 12,
+    padding: spacing.lg,
+    backgroundColor: colors.card,
   },
 
   prizeImage: {
@@ -472,46 +566,39 @@ const styles = StyleSheet.create({
     height: '100%',
   },
 
-  infoCard: {
-    marginTop: 10,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 26,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-
-  titleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginBottom: 14,
+  infoPad: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.lg,
   },
 
   prizeName: {
     fontSize: 22,
-    color: '#111827',
+    color: colors.textPrimary,
     fontWeight: '800',
     marginBottom: 4,
   },
 
   priceText: {
     fontSize: 14,
-    color: '#6B7280',
+    color: colors.textSecondary,
     fontWeight: '600',
+    marginBottom: spacing.md,
   },
 
-  pbBadge: {
-    backgroundColor: '#EEF2FF',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginBottom: spacing.lg,
   },
 
-  pbBadgeText: {
-    color: BRAND_BLUE,
-    fontSize: 13,
+  progressBar: {
+    flex: 1,
+  },
+
+  progressLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
     fontWeight: '800',
   },
 
@@ -519,202 +606,158 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    rowGap: 10,
-    marginBottom: 16,
+    rowGap: spacing.sm,
+    marginBottom: spacing.lg,
   },
 
   metaItem: {
     width: '48%',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
   },
 
   metaLabel: {
     fontSize: 11,
-    color: '#6B7280',
+    color: colors.textSecondary,
     fontWeight: '700',
     marginBottom: 4,
   },
 
   metaValue: {
-    fontSize: 14,
-    color: '#111827',
+    fontSize: 15,
+    color: colors.textPrimary,
     fontWeight: '800',
   },
 
   buttonRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: spacing.md,
   },
 
-  cancelButton: {
+  cancelBtn: {
     flex: 1,
-    height: 48,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
 
-  cancelButtonText: {
-    color: '#374151',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-
-  applyButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: BRAND_BLUE,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  applyButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-
-  applyButtonDisabled: {
-    backgroundColor: '#D1D5DB',
-  },
-
-  applyButtonTextDisabled: {
-    color: '#FFFFFF',
+  applyBtn: {
+    flex: 1.4,
   },
 
   pagination: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 14,
-    gap: 8,
+    marginTop: spacing.lg,
+    gap: spacing.sm,
   },
 
   dot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#D1D5DB',
+    backgroundColor: colors.lineStrong,
   },
 
   dotActive: {
-    width: 20,
-    backgroundColor: BRAND_BLUE,
+    width: 22,
+    backgroundColor: colors.coral,
   },
+
+  /* ---- modals ---- */
 
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(17, 24, 39, 0.45)',
+    backgroundColor: colors.overlay,
     justifyContent: 'center',
-    paddingHorizontal: 24,
+    paddingHorizontal: spacing['2xl'],
   },
 
   modalCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 20,
+    backgroundColor: colors.card,
+    borderRadius: radius['2xl'],
+    padding: spacing.xl,
   },
 
   modalTitle: {
     fontSize: 22,
-    color: '#111827',
+    color: colors.textPrimary,
     fontWeight: '800',
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
 
   modalPrizeName: {
     fontSize: 18,
-    color: '#111827',
+    color: colors.primary,
     fontWeight: '800',
-    marginBottom: 10,
+    marginBottom: spacing.sm,
   },
 
   modalDesc: {
     fontSize: 14,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 20,
     marginBottom: 4,
+    fontWeight: '500',
   },
 
   counterBox: {
-    marginTop: 16,
-    marginBottom: 16,
+    marginTop: spacing.lg,
+    marginBottom: spacing.lg,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 16,
+    gap: spacing.lg,
   },
 
   counterButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#EEF2FF',
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: colors.primarySoft,
     justifyContent: 'center',
     alignItems: 'center',
   },
 
   counterButtonText: {
-    fontSize: 22,
-    color: BRAND_BLUE,
+    fontSize: 24,
+    color: colors.primary,
     fontWeight: '800',
   },
 
   counterValue: {
     minWidth: 40,
     textAlign: 'center',
-    fontSize: 22,
-    color: '#111827',
+    fontSize: 24,
+    color: colors.textPrimary,
     fontWeight: '800',
   },
 
-  totalPbText: {
-    fontSize: 15,
-    color: '#111827',
+  totalPbBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.lg,
+  },
+
+  totalPbLabel: {
+    fontSize: 14,
+    color: colors.textSecondary,
     fontWeight: '700',
-    marginBottom: 18,
+  },
+
+  totalPbValue: {
+    fontSize: 18,
+    color: colors.primary,
+    fontWeight: '800',
   },
 
   modalButtonRow: {
     flexDirection: 'row',
-    gap: 10,
-  },
-
-  modalCancelButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  modalCancelButtonText: {
-    fontSize: 15,
-    color: '#374151',
-    fontWeight: '800',
-  },
-
-  modalApplyButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: BRAND_BLUE,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  modalApplyButtonText: {
-    fontSize: 15,
-    color: '#FFFFFF',
-    fontWeight: '800',
+    gap: spacing.md,
   },
 });
