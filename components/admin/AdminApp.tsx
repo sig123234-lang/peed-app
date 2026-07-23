@@ -18,6 +18,19 @@ import { colors, radius, shadow, spacing, type } from '@/theme';
 // 상단바와 본문이 공유하는 최대 폭. 한 값에서 나와야 좌측 기준선이 어긋나지 않는다.
 const CONTENT_MAX = 1100;
 
+/* ───────────────────────────────────────────────────────────── 어드민 토큰
+   앱 본체 테마(Vivid & Playful)는 소비자용이라 모서리가 크고 굵기가 세다.
+   관리 콘솔은 정보 밀도가 높고 오래 보는 화면이라 별도 값을 쓴다.
+     · 모서리를 6~10px 로 낮춰 데이터가 각지게 정렬돼 보이게
+     · 그림자 대신 1px 경계선 — 카드가 떠다니지 않고 표처럼 읽힌다
+     · 굵기는 600/700 두 단계만 — 전부 굵으면 위계가 사라진다 */
+const ui = {
+  r: { sm: 6, md: 8, lg: 10, pill: 999 },
+  rowH: 44,
+  // 표·목록의 세로 여백. 앱보다 촘촘해야 한 화면에 더 들어온다.
+  padY: 10,
+} as const;
+
 const BURNING_MONTHLY_FEE = 200000; // 버닝 매장 월 구독료
 const PRIZE_BUDGET_RATE = 0.5; // 구독 매출의 50%를 경품 구매에
 const PB_PER_BURNING = 10; // 버닝 매장 리뷰 시 지급 PB
@@ -297,9 +310,9 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
         body: JSON.stringify({ id, password: pw }),
       });
       if (r.ok) onSuccess();
-      else setError('아이디 또는 비밀번호가 맞지 않아요.');
+      else setError('아이디 또는 비밀번호가 올바르지 않습니다.');
     } catch {
-      setError('로그인 요청에 실패했어요.');
+      setError('로그인 요청에 실패했습니다.');
     } finally {
       setLoading(false);
     }
@@ -497,7 +510,7 @@ const SEND_NOTICE_ACTION = {
   onPress: async (item: any) => {
     const title = String(item?.title || '').trim();
     if (!title) {
-      toast('제목이 없는 공지는 보낼 수 없어요', 'err');
+      toast('제목이 없는 공지는 발송할 수 없습니다', 'err');
       return;
     }
     if (!confirmAction(`'${title}'\n\n전체 회원에게 앱 알림으로 보낼까요?`)) return;
@@ -514,9 +527,9 @@ const SEND_NOTICE_ACTION = {
         }),
       });
       const d = await r.json();
-      toast(d?.ok ? `${d.sent}명에게 알림을 보냈어요` : '발송 실패', d?.ok ? 'ok' : 'err');
+      toast(d?.ok ? `${d.sent}명에게 알림을 발송했습니다` : '발송에 실패했습니다', d?.ok ? 'ok' : 'err');
     } catch {
-      toast('발송 실패', 'err');
+      toast('발송에 실패했습니다', 'err');
     }
   },
 };
@@ -814,7 +827,7 @@ function DashboardView({ onGo }: { onGo: (s: string) => void }) {
             <View key={a.id} style={styles.auditRow}>
               <View style={[styles.auditDot, { backgroundColor: AUDIT_COLOR[a.action] || colors.textTertiary }]} />
               <Text style={styles.auditText} numberOfLines={1}>
-                <Text style={{ fontWeight: '800', color: colors.textPrimary }}>
+                <Text style={{ fontWeight: '600', color: colors.textPrimary }}>
                   {COLLECTION_KO[a.collection] || a.collection}
                 </Text>
                 {`  ${AUDIT_ACTION_KO[a.action] || a.action} · ${a.label || a.itemId}`}
@@ -959,7 +972,7 @@ function SalesCRM() {
       body: JSON.stringify({ action, item }),
     });
     setEditing(null);
-    toast(action === 'create' ? '매장이 추가되었습니다' : '저장되었습니다');
+    toast(action === 'create' ? '매장이 추가되었습니다' : '저장했습니다');
     refresh();
   };
   const del = async (id: string) => {
@@ -972,7 +985,7 @@ function SalesCRM() {
     });
     setEditing(null);
     setShowForm(false);
-    toast('삭제되었습니다');
+    toast('삭제했습니다');
     refresh();
   };
   // 코크핏 인라인 저장: 창을 닫지 않고 반영.
@@ -1004,7 +1017,7 @@ function SalesCRM() {
   const endedG = list.filter((s) => s.stage === '이탈');
   const STATUS_TABS = [
     { k: 'all', label: '전체', n: list.length },
-    { k: 'active', label: '🔥 활성', n: activeG.length },
+    { k: 'active', label: '활성', n: activeG.length },
     { k: 'pipeline', label: '📞 영업중', n: pipelineG.length },
     { k: 'ended', label: '⛔ 종료·이탈', n: endedG.length },
   ] as const;
@@ -1097,11 +1110,11 @@ function SalesCRM() {
         <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.xl }} />
       ) : (
         <>
-          {/* 🔥 활성 매장 — 구독 중(매출 발생). 한눈에 보는 리스트. */}
+          {/* 활성 매장 — 구독 중(매출 발생). 한눈에 보는 리스트. */}
           {(statusFilter === 'all' || statusFilter === 'active') && (
             <View style={styles.storeGroup}>
               <View style={styles.groupHead}>
-                <Text style={styles.groupTitle}>🔥 활성 매장</Text>
+                <Text style={styles.groupTitle}>활성 매장</Text>
                 <Text style={styles.groupMeta}>
                   {activeG.length}곳 · MRR {won(activeG.length * BURNING_MONTHLY_FEE)}
                 </Text>
@@ -1183,8 +1196,8 @@ function SalesCRM() {
                             <View style={styles.dealFoot}>
                               <Text style={styles.dealRep}>{s.salesRep || '미배정'}</Text>
                               {s.nextActionDate ? (
-                                <Text style={[styles.dealDate, late && { color: colors.coral, fontWeight: '800' }]}>
-                                  {late ? '⚠ ' : ''}{s.nextActionDate}
+                                <Text style={[styles.dealDate, late && { color: colors.coral, fontWeight: '600' }]}>
+                                  {late ? '' : ''}{s.nextActionDate}
                                 </Text>
                               ) : null}
                             </View>
@@ -1461,7 +1474,7 @@ function CrmAnalytics({ stores }: { stores: any[] }) {
             {reps.map((r, i) => (
               <View key={r.name} style={styles.tr}>
                 <Text style={[styles.td, styles.tdStrong, { flex: 1.2 }]} numberOfLines={1}>
-                  {i === 0 ? '🏆 ' : ''}
+                  {i === 0 ? '' : ''}
                   {r.name}
                 </Text>
                 <Text style={[styles.td, { width: 56, textAlign: 'right' }]}>{r.total}</Text>
@@ -2242,7 +2255,7 @@ function DealCockpit({
           disabled={creatingAcct}
         >
           <Ionicons name="business-outline" size={16} color={colors.white} />
-          <Text style={styles.acctBtnText}>{creatingAcct ? '발급 중…' : '🏢 기업 계정 발급'}</Text>
+          <Text style={styles.acctBtnText}>{creatingAcct ? '발급 중…' : '기업 계정 발급'}</Text>
         </TouchableOpacity>
       ) : (
         <Text style={styles.muted}>활성 매장이 되면 기업 계정을 발급할 수 있어요.</Text>
@@ -2299,7 +2312,7 @@ function PLRow({
   return (
     <View style={[styles.plRow, total && styles.plRowTotal]}>
       <View style={{ flex: 1 }}>
-        <Text style={[styles.plLabel, total && { color: colors.textPrimary, fontWeight: '900' }]}>
+        <Text style={[styles.plLabel, total && { color: colors.textPrimary, fontWeight: '700' }]}>
           {label}
         </Text>
         {sub ? <Text style={styles.plSub}>{sub}</Text> : null}
@@ -2307,7 +2320,7 @@ function PLRow({
       <Text
         style={[
           styles.plValue,
-          total && { fontWeight: '900', fontSize: 18 },
+          total && { fontWeight: '700', fontSize: 18 },
           value < 0 && { color: colors.coral },
           accent && { color: colors.danger },
         ]}
@@ -2408,7 +2421,7 @@ function FinanceView() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'delete', id }),
     });
-    toast('삭제되었습니다');
+    toast('삭제했습니다');
     refresh();
   };
 
@@ -2562,7 +2575,7 @@ function FinanceView() {
           </View>
           {ledger.map((e) => (
             <View key={e.id} style={styles.tr}>
-              <Text style={[styles.td, { flex: 1, color: e.type === 'income' ? colors.primary : colors.coral, fontWeight: '800' }]}>
+              <Text style={[styles.td, { flex: 1, color: e.type === 'income' ? colors.primary : colors.coral, fontWeight: '600' }]}>
                 {e.type === 'income' ? '매출' : '지출'}
               </Text>
               <Text style={[styles.td, styles.tdStrong, { flex: 2 }]}>{e.category}</Text>
@@ -2671,7 +2684,7 @@ function ProductsSection() {
   const TABS = [
     { k: 'all', label: '전체', n: searched.length },
     { k: 'active', label: '🟢 진행중', n: running.length },
-    { k: 'ended', label: '✅ 마감', n: done.length },
+    { k: 'ended', label: '마감', n: done.length },
   ] as const;
 
   const save = async (item: any) => {
@@ -2685,7 +2698,7 @@ function ProductsSection() {
       body: JSON.stringify({ action, item: clean }),
     });
     setEditing(null);
-    toast(action === 'create' ? '상품이 등록되었습니다' : '저장되었습니다');
+    toast(action === 'create' ? '상품이 등록되었습니다' : '저장했습니다');
     refresh();
   };
   const del = async (id: string) => {
@@ -2696,7 +2709,7 @@ function ProductsSection() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'delete', id }),
     });
-    toast('삭제되었습니다');
+    toast('삭제했습니다');
     refresh();
   };
 
@@ -2732,7 +2745,7 @@ function ProductsSection() {
         </View>
         <Text style={styles.muted}>
           등록 상품 시가 {won(catalogValue)} / 경품 예산 {won(budget)} (활성 매장 {activeStoreCount}곳)
-          {over ? ' · ⚠ 예산 초과' : ''}
+          {over ? ' · 예산 초과' : ''}
         </Text>
       </View>
 
@@ -2765,7 +2778,7 @@ function ProductsSection() {
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.xl }} />
       ) : shown.length === 0 ? (
-        <Empty text={tab === 'ended' ? '마감된 상품이 없어요.' : tab === 'active' ? '진행중 상품이 없어요.' : '등록된 상품이 없어요.'} />
+        <Empty text={tab === 'ended' ? '마감된 상품 없음' : tab === 'active' ? '진행 중인 상품 없음' : '등록된 상품 없음'} />
       ) : (
         <View style={styles.table}>
           {shown.map((p, ri) => {
@@ -2774,7 +2787,7 @@ function ProductsSection() {
             return (
               <TouchableOpacity
                 key={p.id}
-                style={[styles.prodRow, ri === shown.length - 1 && styles.rowLast]}
+                style={[styles.prodRow, styles.hoverRow, ri === shown.length - 1 && styles.rowLast]}
                 activeOpacity={0.7}
                 onPress={() => setDetail(p)}
               >
@@ -2887,7 +2900,7 @@ function PostsSection() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'delete', id: p.id }),
     });
-    toast('게시물이 삭제되었습니다');
+    toast('게시물을 삭제했습니다');
     refresh();
   };
 
@@ -2925,7 +2938,7 @@ function PostsSection() {
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.xl }} />
       ) : shown.length === 0 ? (
-        <Empty text={q ? '검색 결과가 없어요.' : '올라온 게시물이 없어요.'} />
+        <Empty text={q ? '검색 결과 없음' : '게시물 없음'} />
       ) : (
         <View style={styles.table}>
           {paged.map((p, ri) => {
@@ -3070,13 +3083,13 @@ function ReservationsSection() {
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.xl }} />
       ) : shown.length === 0 ? (
-        <Empty text={q || filter !== 'all' ? '해당하는 예약이 없어요.' : '들어온 예약이 없어요.'} />
+        <Empty text={q || filter !== 'all' ? '조건에 맞는 예약 없음' : '예약 없음'} />
       ) : (
         <View style={styles.table}>
           {shown.map((r, ri) => {
             const who = nameOf[r.uid];
             return (
-              <View key={r.id} style={[styles.prodRow, ri === shown.length - 1 && styles.rowLast]}>
+              <View key={r.id} style={[styles.prodRow, styles.hoverRow, ri === shown.length - 1 && styles.rowLast]}>
                 <View style={{ flex: 1, minWidth: 0 as any }}>
                   <View style={styles.prodTitleRow}>
                     <Text style={styles.memberName} numberOfLines={1}>{r.storeName || '-'}</Text>
@@ -3338,7 +3351,7 @@ function ProductDetail({
                 <View style={styles.card}>
                   {alreadyWon.map((w, i) => (
                     <View key={w.id + i} style={[styles.storeLine, i < alreadyWon.length - 1 && styles.storeLineBorder]}>
-                      <Text style={[styles.recentName, { flex: 1 }]} numberOfLines={1}>🎉 {w.name}</Text>
+                      <Text style={[styles.recentName, { flex: 1 }]} numberOfLines={1}>{w.name}</Text>
                       <Text style={styles.recentMeta}>{w.handle} · {w.pb}PB</Text>
                     </View>
                   ))}
@@ -3378,14 +3391,14 @@ function ProductDetail({
                 disabled={eligible.length === 0}
               >
                 <Ionicons name="sparkles" size={16} color={colors.white} />
-                <Text style={styles.acctBtnText}>🎲 {alreadyWon.length ? '추가 추첨' : '추첨 실행'} ({Math.min(n, eligible.length)}명)</Text>
+                <Text style={styles.acctBtnText}>{alreadyWon.length ? '추가 추첨' : '추첨 실행'} ({Math.min(n, eligible.length)}명)</Text>
               </TouchableOpacity>
             ) : (
               <View style={styles.card}>
                 <Text style={styles.fLabel}>추첨 결과 · {preview.length}명</Text>
                 {preview.map((w) => (
                   <View key={w.id} style={styles.actRow}>
-                    <Text style={styles.actNote}>🎉 {w.name} ({w.handle})</Text>
+                    <Text style={styles.actNote}>{w.name} ({w.handle})</Text>
                     <Text style={styles.actDate}>{w.pb} PB</Text>
                   </View>
                 ))}
@@ -3544,7 +3557,7 @@ function ProductModal({
       <View style={styles.chipRow}>
         {[
           { v: 'active', l: '🟢 진행중 (앱 노출)' },
-          { v: 'ended', l: '✅ 마감 (숨김)' },
+          { v: 'ended', l: '마감 (숨김)' },
         ].map((o) => (
           <TouchableOpacity
             key={o.v}
@@ -3570,7 +3583,11 @@ function ProductModal({
           <Text style={styles.pbLabel}>경품 예산 (구독 50%)</Text>
           <Text style={styles.pbVal}>{won(budget)}</Text>
         </View>
-        {over ? <Text style={[styles.muted, { color: colors.coral }]}>⚠ 예산을 초과해요. 시가를 낮추거나 예산(매장)을 늘려야 해요.</Text> : null}
+        {over ? (
+          <Text style={[styles.muted, { color: colors.danger }]}>
+            예산 초과 — 상품 시가를 낮추거나 활성 매장을 늘려야 합니다.
+          </Text>
+        ) : null}
       </View>
 
       <TouchableOpacity
@@ -3658,7 +3675,7 @@ function ShipmentsSection() {
       body: JSON.stringify({ action, item }),
     });
     setEditing(null);
-    toast(action === 'create' ? '배송이 추가되었습니다' : '저장되었습니다');
+    toast(action === 'create' ? '배송이 추가되었습니다' : '저장했습니다');
     refresh();
   };
   const del = async (id: string) => {
@@ -3668,7 +3685,7 @@ function ShipmentsSection() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'delete', id }),
     });
-    toast('삭제되었습니다');
+    toast('삭제했습니다');
     refresh();
   };
 
@@ -3696,7 +3713,7 @@ function ShipmentsSection() {
         <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.xl }} />
       ) : (
         <>
-          <Text style={styles.h2}>🎲 추첨 대기 · {pending.length}</Text>
+          <Text style={styles.h2}>추첨 대기 · {pending.length}</Text>
           {pending.length === 0 ? (
             <Empty text="추첨 대기 상품이 없어요." />
           ) : (
@@ -3745,7 +3762,7 @@ function ShipmentsSection() {
                 return (
                   <TouchableOpacity
                     key={s.id}
-                    style={[styles.prodRow, ri === dShown.length - 1 && styles.rowLast]}
+                    style={[styles.prodRow, styles.hoverRow, ri === dShown.length - 1 && styles.rowLast]}
                     activeOpacity={0.7}
                     onPress={() => setEditing(s)}
                   >
@@ -3755,7 +3772,7 @@ function ShipmentsSection() {
                         <Badge value={s.status || '준비'} />
                       </View>
                       <Text style={styles.memberSub} numberOfLines={1}>
-                        🎉 {s.winnerName || '-'} · {s.method || '택배 배송'}
+                        {s.winnerName || '-'} · {s.method || '택배 배송'}
                         {s.tracking ? ` · 송장 ${s.tracking}` : s.serial ? ` · ${s.serial}` : ''}
                       </Text>
                       <View style={styles.prodMetaRow}>
@@ -3824,7 +3841,7 @@ function ShipmentModal({
           </View>
           <View style={styles.pbRow}>
             <Text style={styles.pbLabel}>당첨자</Text>
-            <Text style={styles.pbVal}>🎉 {f.winnerName || '-'}</Text>
+            <Text style={styles.pbVal}>{f.winnerName || '-'}</Text>
           </View>
         </View>
       ) : (
@@ -4010,8 +4027,8 @@ function MembersSection() {
   const shown = tab === '일반' ? normal : tab === '기업' ? corp : list;
   const TABS = [
     { k: 'all', label: '전체', n: list.length },
-    { k: '일반', label: '👤 일반', n: normal.length },
-    { k: '기업', label: '🏢 기업', n: corp.length },
+    { k: '일반', label: '일반', n: normal.length },
+    { k: '기업', label: '기업', n: corp.length },
   ] as const;
   const totalPb = members.reduce((s, m) => s + (Number(m.pb) || 0), 0);
 
@@ -4029,7 +4046,7 @@ function MembersSection() {
       body: JSON.stringify({ action, item }),
     });
     setEditing(null);
-    toast(action === 'create' ? '회원이 추가되었습니다' : '저장되었습니다');
+    toast(action === 'create' ? '회원을 추가했습니다' : '저장했습니다');
     refresh();
   };
   const del = async (id: string) => {
@@ -4040,7 +4057,7 @@ function MembersSection() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'delete', id }),
     });
-    toast('삭제되었습니다');
+    toast('삭제했습니다');
     refresh();
   };
   const newMember = (type: '일반' | '기업') =>
@@ -4109,7 +4126,7 @@ function MembersSection() {
             return (
               <TouchableOpacity
                 key={m.id}
-                style={[styles.memberRow, ri === shown.length - 1 && styles.rowLast]}
+                style={[styles.memberRow, styles.hoverRow, ri === shown.length - 1 && styles.rowLast]}
                 activeOpacity={0.7}
                 onPress={() => setDetail(m)}
               >
@@ -4300,7 +4317,7 @@ function MemberDetail({
                 <View style={styles.staffMetaRow}>
                   <View style={[styles.posPill, !isCorp && { backgroundColor: colors.surfaceAlt }]}>
                     <Text style={[styles.posPillText, !isCorp && { color: colors.textSecondary }]}>
-                      {isCorp ? '🏢 기업 (매장주)' : '👤 일반'}
+                      {isCorp ? '기업 (매장주)' : '일반'}
                     </Text>
                   </View>
                   <Badge value={m.status || 'active'} />
@@ -4675,7 +4692,7 @@ function StaffSection() {
       body: JSON.stringify({ action, item }),
     });
     setEditing(null);
-    toast(action === 'create' ? '직원이 추가되었습니다' : '저장되었습니다');
+    toast(action === 'create' ? '직원이 추가되었습니다' : '저장했습니다');
     refresh();
   };
   const del = async (id: string) => {
@@ -4686,7 +4703,7 @@ function StaffSection() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'delete', id }),
     });
-    toast('삭제되었습니다');
+    toast('삭제했습니다');
     refresh();
   };
 
@@ -4735,7 +4752,7 @@ function StaffSection() {
             return (
               <TouchableOpacity
                 key={m.id}
-                style={[styles.memberRow, ri === list.length - 1 && styles.rowLast]}
+                style={[styles.memberRow, styles.hoverRow, ri === list.length - 1 && styles.rowLast]}
                 activeOpacity={0.7}
                 onPress={() => setDetail(m)}
               >
@@ -5101,7 +5118,7 @@ function PbAdjustModal({
       </Text>
       <FormField label="금액 (PB)" value={amount} onChange={setAmount} numeric placeholder="예: 10" />
       <FormField label="사유" value={reason} onChange={setReason} placeholder="예: 이벤트 보상 / 허위리뷰 환수" />
-      {err ? <Text style={styles.errBanner}>⚠ {err}</Text> : null}
+      {err ? <Text style={styles.errBanner}>{err}</Text> : null}
       <TouchableOpacity
         style={[styles.saveBtn, saving && { opacity: 0.6 }]}
         onPress={submit}
@@ -5171,7 +5188,7 @@ function PbLedgerView() {
             <Text
               style={[styles.reconText, { color: reconciled ? colors.primary : colors.coral }]}
             >
-              {reconciled ? '✓ 정합' : '⚠ 불일치'}
+              {reconciled ? '✓ 정합' : '불일치'}
             </Text>
           </View>
         </View>
@@ -5229,7 +5246,7 @@ function PbLedgerView() {
                 <Text
                   style={[
                     styles.td,
-                    { width: 72, textAlign: 'right', color: up ? colors.primary : colors.coral, fontWeight: '800' },
+                    { width: 72, textAlign: 'right', color: up ? colors.primary : colors.coral, fontWeight: '600' },
                   ]}
                 >
                   {up ? '+' : ''}
@@ -5323,7 +5340,7 @@ function CollectionManager({
       body: JSON.stringify({ action, item: clean }),
     });
     setEditing(null);
-    toast(action === 'create' ? '추가되었습니다' : '저장되었습니다');
+    toast(action === 'create' ? '추가했습니다' : '저장했습니다');
     refresh();
   };
   const del = async (id: string) => {
@@ -5335,7 +5352,7 @@ function CollectionManager({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'delete', id }),
     });
-    toast('삭제되었습니다');
+    toast('삭제했습니다');
     refresh();
   };
 
@@ -5367,7 +5384,7 @@ function CollectionManager({
         </TouchableOpacity>
       </View>
 
-      {err ? <Text style={styles.errBanner}>⚠ {err} — 저장소 미연결 시 저장은 안 되고 시드 데이터만 보여요.</Text> : null}
+      {err ? <Text style={styles.errBanner}>{err} — 저장소 미연결 시 저장은 안 되고 시드 데이터만 보여요.</Text> : null}
 
       <View style={styles.searchBar}>
         <Ionicons name="search" size={16} color={colors.textTertiary} />
@@ -5384,7 +5401,7 @@ function CollectionManager({
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.xl }} />
       ) : shown.length === 0 ? (
-        <Empty text={q ? '검색 결과가 없어요.' : '등록된 항목이 없어요.'} />
+        <Empty text={q ? '검색 결과 없음' : '등록된 항목 없음'} />
       ) : (
         <View style={styles.table}>
           <View style={[styles.tr, styles.trHead]}>
@@ -5475,7 +5492,7 @@ function StatusText({ value }: { value: string }) {
     <Text
       style={{
         color: good ? colors.primary : warn ? colors.coral : colors.textSecondary,
-        fontWeight: '800',
+        fontWeight: '600',
         fontSize: 12,
       }}
     >
@@ -5723,9 +5740,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.bg,
   },
-  logo: { fontSize: 22, fontWeight: '900', color: colors.primary, letterSpacing: 0.5 },
+  logo: { fontSize: 22, fontWeight: '700', color: colors.primary, letterSpacing: 0.5 },
   logoDot: { color: colors.coral },
-  logoAdmin: { fontSize: 14, fontWeight: '800', color: colors.textSecondary },
+  logoAdmin: { fontSize: 14, fontWeight: '600', color: colors.textSecondary },
 
   loginWrap: {
     flex: 1,
@@ -5739,15 +5756,16 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 380,
     backgroundColor: colors.card,
-    borderRadius: radius.xl,
+    borderRadius: ui.r.lg,
     padding: spacing['2xl'],
-    ...shadow.card,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
   loginSub: { ...type.body, color: colors.textSecondary, marginTop: spacing.xs, marginBottom: spacing.lg },
   label: { ...type.label, color: colors.textPrimary, marginTop: spacing.md, marginBottom: spacing.xs },
   input: {
-    height: 48,
-    borderRadius: radius.md,
+    height: 40,
+    borderRadius: ui.r.md,
     borderWidth: 1,
     borderColor: colors.line,
     backgroundColor: colors.surface,
@@ -5759,13 +5777,13 @@ const styles = StyleSheet.create({
   error: { color: colors.danger, fontWeight: '700', fontSize: 13, marginTop: spacing.md },
   loginBtn: {
     height: 50,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: spacing.xl,
   },
-  loginBtnText: { color: colors.white, fontSize: 16, fontWeight: '800' },
+  loginBtnText: { color: colors.white, fontSize: 16, fontWeight: '600' },
 
   /* console */
   consoleRoot: { flex: 1, minHeight: '100%' as any, flexDirection: 'row', backgroundColor: colors.surface },
@@ -5787,14 +5805,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
+    height: 36,
     paddingHorizontal: spacing.md,
-    paddingVertical: 11,
-    borderRadius: radius.md,
-    marginBottom: 2,
+    borderRadius: ui.r.md,
+    marginBottom: 1,
   },
-  navItemActive: { backgroundColor: 'rgba(255,255,255,0.1)' },
-  navLabel: { fontSize: 14, fontWeight: '700', color: 'rgba(255,255,255,0.55)' },
-  navLabelActive: { color: '#FFFFFF', fontWeight: '800' },
+  navItemActive: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  navLabel: { fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.6)' },
+  navLabelActive: { color: '#FFFFFF' },
 
   mainCol: { flex: 1 },
   topbar: {
@@ -5815,12 +5833,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing['2xl'],
   },
   topbarInnerMobile: { paddingHorizontal: spacing.md },
-  topbarTitle: { ...type.title, color: colors.textPrimary },
+  topbarTitle: { fontSize: 15, lineHeight: 20, fontWeight: '700', color: colors.textPrimary },
   topbarLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1, minWidth: 0 as any },
   hamburger: {
     width: 38,
     height: 38,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.surfaceAlt,
@@ -5846,7 +5864,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  adminAvatarText: { color: colors.white, fontWeight: '900', fontSize: 14 },
+  adminAvatarText: { color: colors.white, fontWeight: '700', fontSize: 14 },
   adminChipText: { ...type.label, color: colors.textSecondary },
 
   contentPane: { flex: 1 },
@@ -5867,21 +5885,23 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     flexBasis: 420,
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
+    borderRadius: ui.r.lg,
     padding: spacing.lg,
-    ...shadow.soft,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
   dashCardSm: {
     flexGrow: 1,
     flexBasis: 260,
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
+    borderRadius: ui.r.lg,
     padding: spacing.lg,
-    ...shadow.soft,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
-  cardTitle: { ...type.label, color: colors.textPrimary, marginBottom: spacing.sm },
-  cardBig: { fontSize: 18, fontWeight: '900', color: colors.primary },
+  cardTitle: { fontSize: 13, lineHeight: 18, fontWeight: '700', color: colors.textPrimary, marginBottom: spacing.sm },
+  cardBig: { fontSize: 18, fontWeight: '700', color: colors.primary },
   muted: { ...type.body, color: colors.textTertiary, marginTop: spacing.sm },
   recentRow: {
     flexDirection: 'row',
@@ -5891,16 +5911,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.line,
   },
-  recentName: { fontSize: 14, fontWeight: '800', color: colors.textPrimary },
+  recentName: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
   recentMeta: { fontSize: 12, fontWeight: '600', color: colors.textTertiary, marginTop: 1 },
 
-  sectionSub: { ...type.body, color: colors.textSecondary, marginTop: 4 },
+  sectionSub: { fontSize: 13, lineHeight: 18, fontWeight: '500', color: colors.textTertiary, marginTop: 3 },
   card: {
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
+    borderRadius: ui.r.lg,
     padding: spacing.lg,
-    marginBottom: spacing.lg,
-    ...shadow.soft,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
   linkText: { ...type.label, color: colors.primary },
 
@@ -5923,18 +5944,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 2,
   },
-  flyVal: { fontSize: 15, fontWeight: '900', color: colors.textPrimary },
+  flyVal: { fontSize: 15, fontWeight: '700', color: colors.textPrimary },
   flyLabel: { ...type.caption, color: colors.textTertiary },
 
-  gaugePct: { fontSize: 30, fontWeight: '900', color: colors.primary, marginVertical: spacing.sm },
+  gaugePct: { fontSize: 30, fontWeight: '700', color: colors.primary, marginVertical: spacing.sm },
   gaugeTrack: {
     height: 10,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
     backgroundColor: colors.surface,
     overflow: 'hidden',
     marginBottom: spacing.md,
   },
-  gaugeFill: { height: '100%', backgroundColor: colors.primary, borderRadius: radius.pill },
+  gaugeFill: { height: '100%', backgroundColor: colors.primary, borderRadius: ui.r.pill },
   gaugeLegend: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -5945,7 +5966,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.line,
   },
   gaugeLegendLabel: { ...type.caption, color: colors.textTertiary },
-  gaugeLegendVal: { fontSize: 13, fontWeight: '800', color: colors.textPrimary },
+  gaugeLegendVal: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
   // 구분선이 있는 마지막 행과 카드 하단 링크가 붙지 않도록 띄운다.
   cardLink: { marginTop: spacing.md, alignSelf: 'flex-start' },
   pbRow: {
@@ -5956,12 +5977,12 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.line,
   },
   pbLabel: { ...type.label, color: colors.textSecondary },
-  pbVal: { fontSize: 15, fontWeight: '900', color: colors.textPrimary },
+  pbVal: { fontSize: 15, fontWeight: '700', color: colors.textPrimary },
 
   chart: { flexDirection: 'row', alignItems: 'flex-end', height: 150, gap: spacing.md, marginTop: spacing.sm },
   chartCol: { flex: 1, alignItems: 'center' },
-  chartBarTrack: { width: '100%', height: 120, backgroundColor: colors.surface, borderRadius: radius.sm, justifyContent: 'flex-end', overflow: 'hidden' },
-  chartBar: { width: '100%', backgroundColor: colors.primary, borderRadius: radius.sm },
+  chartBarTrack: { width: '100%', height: 120, backgroundColor: colors.surface, borderRadius: ui.r.sm, justifyContent: 'flex-end', overflow: 'hidden' },
+  chartBar: { width: '100%', backgroundColor: colors.primary, borderRadius: ui.r.sm },
   chartLabel: { ...type.caption, color: colors.textTertiary, marginTop: 6 },
 
   badge: {
@@ -5969,23 +5990,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     alignSelf: 'flex-start',
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
+    height: 22,
+    paddingHorizontal: 7,
+    borderRadius: ui.r.sm,
   },
-  badgeDot: { width: 6, height: 6, borderRadius: 3 },
-  badgeText: { fontSize: 12, fontWeight: '800' },
+  badgeDot: { width: 5, height: 5, borderRadius: 3 },
+  badgeText: { fontSize: 11, fontWeight: '600' },
 
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    height: 42,
-    borderRadius: radius.md,
-    backgroundColor: colors.card,
+    height: 36,
+    borderRadius: ui.r.md,
+    backgroundColor: colors.bg,
     borderWidth: 1,
-    borderColor: colors.line,
-    paddingHorizontal: spacing.lg,
+    borderColor: colors.lineStrong,
+    paddingHorizontal: spacing.md,
     marginBottom: spacing.md,
   },
   searchInput: {
@@ -5996,7 +6017,7 @@ const styles = StyleSheet.create({
   },
   countText: { ...type.caption, color: colors.textTertiary },
 
-  h1: { ...type.h1, color: colors.textPrimary },
+  h1: { fontSize: 20, lineHeight: 26, fontWeight: '700', color: colors.textPrimary },
   h1Row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -6005,33 +6026,39 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginBottom: spacing.lg,
   },
-  h2: { ...type.title, color: colors.textPrimary, marginTop: spacing['2xl'], marginBottom: spacing.md },
+  h2: { fontSize: 15, lineHeight: 20, fontWeight: '700', color: colors.textPrimary, marginTop: spacing['2xl'], marginBottom: spacing.md },
 
+  // 버튼은 채움(주요) / 외곽선(보조) 두 가지만. 예전엔 pill·soft·ghost 가
+  // 뒤섞여 같은 위계의 버튼이 화면마다 다르게 보였다.
   addBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    justifyContent: 'center',
+    gap: 5,
+    height: 32,
     backgroundColor: colors.primary,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    borderRadius: ui.r.md,
+    paddingHorizontal: spacing.md,
   },
-  addBtnText: { color: colors.white, fontWeight: '800', fontSize: 13 },
+  addBtnText: { color: colors.white, fontWeight: '600', fontSize: 13 },
   addBtnGhost: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: colors.primarySoft,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    justifyContent: 'center',
+    gap: 5,
+    height: 32,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.lineStrong,
+    borderRadius: ui.r.md,
+    paddingHorizontal: spacing.md,
     marginRight: spacing.sm,
   },
-  addBtnGhostText: { color: colors.primary, fontWeight: '800', fontSize: 13 },
+  addBtnGhostText: { color: colors.textPrimary, fontWeight: '600', fontSize: 13 },
   csvArea: {
     minHeight: 140,
     backgroundColor: colors.surface,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     borderWidth: 1,
     borderColor: colors.line,
     padding: spacing.md,
@@ -6046,12 +6073,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
+    height: 32,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-    backgroundColor: colors.primarySoft,
+    borderRadius: ui.r.md,
+    borderWidth: 1,
+    borderColor: colors.lineStrong,
+    backgroundColor: colors.bg,
   },
-  refreshText: { color: colors.primary, fontWeight: '800', fontSize: 13 },
+  refreshText: { color: colors.textSecondary, fontWeight: '600', fontSize: 13 },
 
   kpiRow: { flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap', marginBottom: spacing.lg },
   kpiCard: {
@@ -6060,60 +6089,100 @@ const styles = StyleSheet.create({
     // 상한이 없으면 줄바꿈된 마지막 카드 하나가 가로 전체로 늘어나 열이 깨진다.
     maxWidth: 320,
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
+    borderRadius: ui.r.lg,
     padding: spacing.lg,
-    ...shadow.soft,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
-  kpiValue: { fontSize: 26, fontWeight: '900', color: colors.primary },
+  kpiValue: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    ...({ fontVariantNumeric: 'tabular-nums' } as object),
+  },
   kpiLabel: { ...type.label, color: colors.textSecondary, marginTop: 4 },
 
   revenueCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
+    borderRadius: ui.r.lg,
     padding: spacing.lg,
-    ...shadow.soft,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
   revenueLabel: { ...type.label, color: colors.textSecondary },
-  revenueValue: { fontSize: 24, fontWeight: '900', color: colors.textPrimary, marginTop: 4 },
-  revenueBtn: { backgroundColor: colors.primarySoft, borderRadius: radius.pill, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
-  revenueBtnText: { color: colors.primary, fontWeight: '800', fontSize: 13 },
+  revenueValue: { fontSize: 24, fontWeight: '700', color: colors.textPrimary, marginTop: 4 },
+  revenueBtn: {
+    height: 32,
+    justifyContent: 'center',
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.lineStrong,
+    borderRadius: ui.r.md,
+    paddingHorizontal: spacing.md,
+  },
+  revenueBtnText: { color: colors.textSecondary, fontWeight: '600', fontSize: 13 },
 
   quickRow: { flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap' },
   quickCard: {
     width: 150,
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
+    borderRadius: ui.r.lg,
     padding: spacing.lg,
     gap: spacing.sm,
-    ...shadow.soft,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
   quickLabel: { ...type.label, color: colors.textPrimary },
 
-  table: { backgroundColor: colors.card, borderRadius: radius.lg, overflow: 'hidden', ...shadow.soft },
+  table: {
+    backgroundColor: colors.card,
+    borderRadius: ui.r.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
   tr: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    minHeight: ui.rowH,
+    paddingHorizontal: spacing.md,
+    paddingVertical: ui.padY,
     borderBottomWidth: 1,
     borderBottomColor: colors.line,
     gap: spacing.md,
   },
-  trHead: { backgroundColor: colors.surface },
+  // 헤더는 배경을 깔지 않고 아래 경계선만 진하게 — 표가 무거워 보이지 않는다.
+  trHead: {
+    minHeight: 36,
+    paddingVertical: 0,
+    backgroundColor: colors.bg,
+    borderBottomColor: colors.lineStrong,
+  },
   // 카드 안 마지막 행의 밑줄은 카드 테두리와 겹쳐 선이 하나 떠 보인다.
   rowLast: { borderBottomWidth: 0 },
-  th: { ...type.caption, color: colors.textSecondary },
+  // 마우스를 올렸을 때 반응이 없으면 '누를 수 있는 줄'인지 알기 어렵다.
+  // (웹 전용 — 네이티브에서는 무시된다)
+  hoverRow: {
+    ...({ transition: 'background-color .12s ease', cursor: 'pointer' } as object),
+  },
+  th: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '600',
+    color: colors.textTertiary,
+    letterSpacing: 0.3,
+  },
   td: { fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
-  tdStrong: { color: colors.textPrimary, fontWeight: '800' },
+  tdStrong: { color: colors.textPrimary, fontWeight: '600' },
   // 숫자는 오른쪽 정렬 + 고정폭 숫자여야 자릿수가 세로로 맞는다.
   tNum: {
     textAlign: 'right',
     ...({ fontVariantNumeric: 'tabular-nums' } as object),
   },
-  reconBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
-  reconText: { fontSize: 12, fontWeight: '800' },
+  reconBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: ui.r.pill },
+  reconText: { fontSize: 12, fontWeight: '600' },
   toastWrap: {
     position: 'absolute',
     bottom: spacing.xl,
@@ -6128,8 +6197,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#141824',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    ...shadow.card,
+    borderRadius: ui.r.md,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
   toastErr: { backgroundColor: colors.coral },
   toastText: { color: '#fff', fontWeight: '700', fontSize: 13 },
@@ -6140,41 +6210,44 @@ const styles = StyleSheet.create({
   pageBtn: {
     alignSelf: 'center',
     marginTop: spacing.md,
+    height: 32,
+    justifyContent: 'center',
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceAlt,
+    borderRadius: ui.r.md,
+    borderWidth: 1,
+    borderColor: colors.lineStrong,
+    backgroundColor: colors.bg,
   },
-  pageBtnText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+  pageBtnText: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
   invBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     backgroundColor: colors.primarySoft,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
-  invBtnText: { fontSize: 12, fontWeight: '800', color: colors.primary },
+  invBtnText: { fontSize: 12, fontWeight: '600', color: colors.primary },
   naverCard: {
     backgroundColor: '#F0FBF3',
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     borderWidth: 1,
     borderColor: '#B7E7C4',
     padding: spacing.md,
     marginBottom: spacing.lg,
   },
-  naverTitle: { fontSize: 15, fontWeight: '900', color: '#12833A', marginBottom: 2 },
+  naverTitle: { fontSize: 15, fontWeight: '700', color: '#12833A', marginBottom: 2 },
   naverBtn: {
     backgroundColor: '#03C75A',
-    borderRadius: radius.sm,
+    borderRadius: ui.r.sm,
     paddingHorizontal: spacing.lg,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  naverBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  naverBtnText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: 6 },
-  naverThumb: { width: 92, height: 92, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt },
+  naverThumb: { width: 92, height: 92, borderRadius: ui.r.sm, backgroundColor: colors.surfaceAlt },
   naverThumbOn: { borderWidth: 3, borderColor: '#03C75A' },
   coverTag: {
     position: 'absolute',
@@ -6185,7 +6258,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
   },
-  coverTagText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+  coverTagText: { color: '#fff', fontSize: 10, fontWeight: '600' },
   ckPhotoWrap: { position: 'relative' },
   photoDel: {
     position: 'absolute',
@@ -6206,9 +6279,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  photoAddText: { fontSize: 11, fontWeight: '800', color: colors.primary, marginTop: 2 },
-  prodThumb: { width: 52, height: 52, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt },
-  prodHero: { width: 72, height: 72, borderRadius: radius.md, backgroundColor: colors.surfaceAlt },
+  photoAddText: { fontSize: 11, fontWeight: '600', color: colors.primary, marginTop: 2 },
+  prodThumb: { width: 52, height: 52, borderRadius: ui.r.sm, backgroundColor: colors.surfaceAlt },
+  prodHero: { width: 72, height: 72, borderRadius: ui.r.md, backgroundColor: colors.surfaceAlt },
   prodRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -6225,14 +6298,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 3,
     backgroundColor: colors.surfaceAlt,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
-  prodPillText: { fontSize: 12, fontWeight: '800', color: colors.primary },
+  prodPillText: { fontSize: 12, fontWeight: '600', color: colors.primary },
   prodImgBox: {
     height: 160,
-    borderRadius: radius.lg,
+    borderRadius: ui.r.lg,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.line,
@@ -6251,15 +6324,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(20,24,36,0.72)',
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
   },
-  prodImgEditText: { color: colors.white, fontSize: 12, fontWeight: '800' },
+  prodImgEditText: { color: colors.white, fontSize: 12, fontWeight: '600' },
   cutHint: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     backgroundColor: colors.coralSoft,
-    borderRadius: radius.sm,
+    borderRadius: ui.r.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     marginBottom: spacing.md,
@@ -6298,11 +6371,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 4,
     paddingVertical: spacing.sm,
-    borderRadius: radius.sm,
+    borderRadius: ui.r.sm,
     backgroundColor: colors.primarySoft,
     marginTop: 2,
   },
-  menuAddText: { fontSize: 13, fontWeight: '800', color: colors.primary },
+  menuAddText: { fontSize: 13, fontWeight: '600', color: colors.primary },
   memberRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -6312,21 +6385,21 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.line,
   },
-  mTag: { width: 40, alignItems: 'center', paddingVertical: 3, borderRadius: radius.sm },
+  mTag: { width: 40, alignItems: 'center', paddingVertical: 3, borderRadius: ui.r.sm },
   mTagCorp: { backgroundColor: colors.primarySoft },
   mTagUser: { backgroundColor: colors.surfaceAlt },
-  mTagText: { fontSize: 11, fontWeight: '800' },
-  memberName: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+  mTagText: { fontSize: 11, fontWeight: '600' },
+  memberName: { fontSize: 15, fontWeight: '600', color: colors.textPrimary },
   memberSub: { fontSize: 12, color: colors.textTertiary, fontWeight: '600', marginTop: 1 },
   memberActs: { flexDirection: 'row', gap: spacing.md, alignItems: 'center' },
   genBtn: {
     backgroundColor: colors.primary,
-    borderRadius: radius.sm,
+    borderRadius: ui.r.sm,
     paddingHorizontal: spacing.md,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  genBtnText: { color: colors.white, fontWeight: '800', fontSize: 13 },
+  genBtnText: { color: colors.white, fontWeight: '600', fontSize: 13 },
   pickerBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -6334,7 +6407,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.line,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
   },
@@ -6343,8 +6416,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.line,
     borderTopWidth: 0,
-    borderBottomLeftRadius: radius.md,
-    borderBottomRightRadius: radius.md,
+    borderBottomLeftRadius: ui.r.md,
+    borderBottomRightRadius: ui.r.md,
     overflow: 'hidden',
   },
   pickRow: {
@@ -6360,20 +6433,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
     backgroundColor: colors.primarySoft,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     padding: spacing.md,
   },
-  acctId: { fontSize: 15, fontWeight: '900', color: colors.primary },
+  acctId: { fontSize: 15, fontWeight: '700', color: colors.primary },
   acctBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
     backgroundColor: colors.primary,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     paddingVertical: spacing.md,
   },
-  acctBtnText: { color: colors.white, fontWeight: '800', fontSize: 14 },
+  acctBtnText: { color: colors.white, fontWeight: '600', fontSize: 14 },
   staffProfile: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.lg },
   staffAvatar: {
     width: 52,
@@ -6383,16 +6456,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  staffAvatarText: { color: colors.white, fontSize: 22, fontWeight: '900' },
-  staffName: { fontSize: 20, fontWeight: '900', color: colors.textPrimary },
+  staffAvatarText: { color: colors.white, fontSize: 22, fontWeight: '700' },
+  staffName: { fontSize: 20, fontWeight: '700', color: colors.textPrimary },
   staffMetaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: 4 },
   posPill: {
     backgroundColor: colors.primarySoft,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
     paddingHorizontal: 10,
     paddingVertical: 3,
   },
-  posPillText: { fontSize: 12, fontWeight: '800', color: colors.primary },
+  posPillText: { fontSize: 12, fontWeight: '600', color: colors.primary },
   staffStatGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
   staffStat: {
     // width + flexGrow 를 같이 주면 칸이 들쭉날쭉해진다. flexBasis 로 통일.
@@ -6400,13 +6473,13 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     minWidth: 130,
     backgroundColor: colors.surface,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
   },
-  staffStatV: { fontSize: 18, fontWeight: '900', color: colors.textPrimary },
+  staffStatV: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },
   staffStatL: { fontSize: 12, color: colors.textTertiary, marginTop: 2 },
-  sLabel: { fontSize: 13, fontWeight: '800', color: colors.textSecondary, marginTop: spacing.lg, marginBottom: spacing.sm },
+  sLabel: { fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginTop: spacing.lg, marginBottom: spacing.sm },
   detailRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.md },
   detailLabel: { fontSize: 13, color: colors.textTertiary, fontWeight: '700', width: 64 },
   detailValue: { flex: 1, textAlign: 'right', fontSize: 13, fontWeight: '700', color: colors.textPrimary },
@@ -6418,22 +6491,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     backgroundColor: colors.primarySoft,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
   },
-  ckEditText: { fontSize: 13, fontWeight: '800', color: colors.primary },
+  ckEditText: { fontSize: 13, fontWeight: '600', color: colors.primary },
   ckStatRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md, marginBottom: spacing.sm },
   ckStat: {
     flex: 1,
     backgroundColor: colors.surface,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     paddingVertical: spacing.md,
     alignItems: 'center',
   },
-  ckStatV: { fontSize: 15, fontWeight: '900', color: colors.textPrimary },
+  ckStatV: { fontSize: 15, fontWeight: '700', color: colors.textPrimary },
   ckStatL: { fontSize: 12, color: colors.textTertiary, marginTop: 2 },
-  ckDday: { fontSize: 13, fontWeight: '900', color: colors.primary },
+  ckDday: { fontSize: 13, fontWeight: '700', color: colors.primary },
   ckNext: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   ckInfoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 5 },
   ckInfoText: { flex: 1, fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
@@ -6445,10 +6518,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     backgroundColor: colors.primarySoft,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     paddingVertical: spacing.md,
   },
-  ckActText: { fontSize: 12, fontWeight: '800', color: colors.primary },
+  ckActText: { fontSize: 12, fontWeight: '600', color: colors.primary },
   ckDelete: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -6467,14 +6540,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySoft,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
   },
   coordText: { fontSize: 12, fontWeight: '700', color: colors.primary },
   segRow: {
     flexDirection: 'row',
     gap: spacing.xs,
     backgroundColor: colors.surfaceAlt,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     padding: 4,
     marginBottom: spacing.lg,
     alignSelf: 'flex-start',
@@ -6485,22 +6558,23 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
-    borderRadius: radius.sm,
+    borderRadius: ui.r.sm,
   },
   segBtnOn: { backgroundColor: colors.primary },
   segText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
   segTextOn: { color: colors.white },
   statusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.lg },
   statusChip: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceAlt,
+    height: 30,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    borderRadius: ui.r.md,
+    backgroundColor: colors.bg,
     borderWidth: 1,
-    borderColor: 'transparent',
+    borderColor: colors.line,
   },
-  statusChipOn: { backgroundColor: colors.card, borderColor: colors.primary },
-  statusChipText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+  statusChipOn: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+  statusChipText: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
   statusChipTextOn: { color: colors.primary },
   storeGroup: { marginBottom: spacing['2xl'] },
   groupHead: {
@@ -6509,14 +6583,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.md,
   },
-  groupTitle: { fontSize: 16, fontWeight: '900', color: colors.textPrimary },
+  groupTitle: { fontSize: 16, fontWeight: '700', color: colors.textPrimary },
   groupMeta: { fontSize: 13, fontWeight: '700', color: colors.textTertiary },
   funRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
   funLabelWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, width: 64 },
   funLabel: { fontSize: 13, fontWeight: '700', color: colors.textPrimary },
-  funTrack: { flex: 1, height: 22, backgroundColor: colors.surfaceAlt, borderRadius: radius.sm, overflow: 'hidden' },
-  funFill: { height: '100%', borderRadius: radius.sm, minWidth: 2 },
-  funCount: { width: 44, textAlign: 'right', fontSize: 13, fontWeight: '800', color: colors.textPrimary },
+  funTrack: { flex: 1, height: 22, backgroundColor: colors.surfaceAlt, borderRadius: ui.r.sm, overflow: 'hidden' },
+  funFill: { height: '100%', borderRadius: ui.r.sm, minWidth: 2 },
+  funCount: { width: 44, textAlign: 'right', fontSize: 13, fontWeight: '600', color: colors.textPrimary },
   funConv: { width: 44, textAlign: 'right', fontSize: 12, fontWeight: '700', color: colors.textTertiary },
 
   errBanner: {
@@ -6525,18 +6599,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
     padding: spacing.md,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     marginBottom: spacing.md,
     overflow: 'hidden',
   },
   empty: {
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    paddingVertical: spacing['3xl'],
+    borderRadius: ui.r.lg,
+    paddingVertical: spacing['2xl'],
     paddingHorizontal: spacing.xl,
     alignItems: 'center',
     gap: spacing.md,
-    ...shadow.soft,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
   emptyIcon: {
     width: 48,
@@ -6546,37 +6621,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyText: { ...type.body, color: colors.textTertiary, fontWeight: '600' },
+  emptyText: { fontSize: 13, fontWeight: '600', color: colors.textTertiary },
 
   appCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.lg,
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
+    borderRadius: ui.r.lg,
     padding: spacing.lg,
     marginBottom: spacing.md,
-    ...shadow.soft,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
   appTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 4 },
-  appName: { fontSize: 16, fontWeight: '800', color: colors.textPrimary },
+  appName: { fontSize: 16, fontWeight: '600', color: colors.textPrimary },
   pill: {
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
     color: colors.primary,
     backgroundColor: colors.primarySoft,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
     overflow: 'hidden',
   },
   appMeta: { fontSize: 13, color: colors.textSecondary, fontWeight: '600', marginTop: 2 },
   appNote: { fontSize: 13, color: colors.textTertiary, fontStyle: 'italic', marginTop: 4 },
   appActions: { flexDirection: 'row', gap: spacing.sm },
-  approveBtn: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.primary },
-  approveText: { color: colors.white, fontWeight: '800', fontSize: 14 },
-  rejectBtn: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceAlt },
-  rejectText: { color: colors.textSecondary, fontWeight: '800', fontSize: 14 },
+  approveBtn: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: ui.r.md, backgroundColor: colors.primary },
+  approveText: { color: colors.white, fontWeight: '600', fontSize: 14 },
+  rejectBtn: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: ui.r.md, backgroundColor: colors.surfaceAlt },
+  rejectText: { color: colors.textSecondary, fontWeight: '600', fontSize: 14 },
 
   /* modal */
   modalOverlay: {
@@ -6592,7 +6668,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 440,
     backgroundColor: colors.card,
-    borderRadius: radius.xl,
+    borderRadius: ui.r.lg,
     padding: spacing.lg,
     ...shadow.lifted,
   },
@@ -6632,8 +6708,8 @@ const styles = StyleSheet.create({
   modalTitle: { ...type.title, color: colors.textPrimary },
   fLabel: { fontSize: 13, fontWeight: '700', color: colors.textPrimary, marginTop: spacing.sm, marginBottom: 5 },
   fInput: {
-    height: 44,
-    borderRadius: radius.md,
+    height: 36,
+    borderRadius: ui.r.md,
     borderWidth: 1,
     borderColor: colors.line,
     backgroundColor: colors.surface,
@@ -6644,7 +6720,7 @@ const styles = StyleSheet.create({
   },
   imgPick: {
     height: 150,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     borderWidth: 1,
     borderColor: colors.line,
     backgroundColor: colors.surface,
@@ -6660,7 +6736,7 @@ const styles = StyleSheet.create({
   chip: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.line,
@@ -6669,44 +6745,45 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
   chipTextOn: { color: colors.primary },
   saveBtn: {
-    height: 48,
-    borderRadius: radius.md,
+    height: 40,
+    borderRadius: ui.r.md,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: spacing.sm,
   },
-  saveBtnText: { color: colors.white, fontWeight: '800', fontSize: 15 },
+  saveBtnText: { color: colors.white, fontWeight: '600', fontSize: 15 },
 
   /* sales CRM · kanban */
   kanCol: {
     width: 220,
     backgroundColor: colors.surface,
-    borderRadius: radius.lg,
+    borderRadius: ui.r.lg,
     padding: spacing.md,
   },
   kanHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   stageDot: { width: 8, height: 8, borderRadius: 4 },
-  kanTitle: { fontSize: 14, fontWeight: '800', color: colors.textPrimary, flex: 1 },
+  kanTitle: { fontSize: 14, fontWeight: '600', color: colors.textPrimary, flex: 1 },
   kanCount: {
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
     color: colors.textSecondary,
     backgroundColor: colors.card,
     paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
     overflow: 'hidden',
   },
   kanSum: { ...type.caption, color: colors.textTertiary, marginTop: 2, marginBottom: spacing.sm },
   dealCard: {
     backgroundColor: colors.card,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     padding: spacing.md,
     marginBottom: spacing.sm,
-    ...shadow.soft,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
-  dealName: { fontSize: 14, fontWeight: '800', color: colors.textPrimary },
+  dealName: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
   dealMeta: { fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginTop: 2 },
   dealFoot: {
     flexDirection: 'row',
@@ -6716,12 +6793,12 @@ const styles = StyleSheet.create({
   },
   dealRep: {
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '600',
     color: colors.primary,
     backgroundColor: colors.primarySoft,
     paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
     overflow: 'hidden',
   },
   dealDate: { fontSize: 11, fontWeight: '700', color: colors.textTertiary },
@@ -6730,17 +6807,17 @@ const styles = StyleSheet.create({
   stageChip: {
     paddingHorizontal: spacing.md,
     paddingVertical: 7,
-    borderRadius: radius.pill,
+    borderRadius: ui.r.pill,
     backgroundColor: colors.surface,
     borderWidth: 1.5,
     borderColor: colors.line,
   },
-  stageChipText: { fontSize: 13, fontWeight: '800', color: colors.textSecondary },
+  stageChipText: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
   formRow: { flexDirection: 'row', gap: spacing.md },
   noteAdd: {
     width: 44,
     height: 44,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
@@ -6757,7 +6834,7 @@ const styles = StyleSheet.create({
   delDealBtn: {
     width: 48,
     height: 48,
-    borderRadius: radius.md,
+    borderRadius: ui.r.md,
     backgroundColor: colors.coralSoft,
     alignItems: 'center',
     justifyContent: 'center',
@@ -6779,5 +6856,5 @@ const styles = StyleSheet.create({
   },
   plLabel: { ...type.label, color: colors.textSecondary },
   plSub: { ...type.caption, color: colors.textTertiary, marginTop: 1 },
-  plValue: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+  plValue: { fontSize: 15, fontWeight: '600', color: colors.textPrimary },
 });
