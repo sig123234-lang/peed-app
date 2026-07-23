@@ -10,6 +10,9 @@ import { useFeed } from '@/context/feed';
 import { ReservableStore } from '@/data/stores';
 import { APP_WIDTH, colors, radius, shadow, spacing } from '@/theme';
 
+// 메뉴는 대표 몇 개만 먼저 보여준다.
+const MENU_PREVIEW = 5;
+
 function Stars({ rating }: { rating: number }) {
   return (
     <View style={styles.stars}>
@@ -78,6 +81,9 @@ export function StoreDetailScreen({
   onReview: () => void;
 }) {
   const { posts } = useFeed();
+  // 메뉴가 수십 개인 매장이면 화면이 메뉴로만 채워져 아래 예약·리뷰까지
+  // 내려가기 힘들다. 대표 5개만 펼쳐두고 나머지는 접는다.
+  const [menusOpen, setMenusOpen] = useState(false);
   // 이 매장의 전체 리뷰를 서버에서 조회(현재 피드 샘플이 아니라 매장별 전량).
   const [serverReviews, setServerReviews] = useState<any[]>([]);
   useEffect(() => {
@@ -183,25 +189,52 @@ export function StoreDetailScreen({
             <InfoRow icon="location-outline" label="위치" value={store.location} last />
           </View>
 
-          {/* 메뉴 */}
-          {store.menus && store.menus.length > 0 ? (
-            <>
-              <Text style={styles.sectionTitle}>메뉴</Text>
-              <View style={styles.card}>
-                {store.menus.map((m, i) => (
-                  <View
-                    key={i}
-                    style={[styles.menuRow, i < store.menus!.length - 1 && styles.infoRowBorder]}
-                  >
-                    <Text style={styles.menuName} numberOfLines={1}>{m.name}</Text>
-                    <Text style={styles.menuPrice}>
-                      {Number(m.price).toLocaleString('ko-KR')}원
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            </>
-          ) : null}
+          {/* 메뉴 — 대표 5개만 보이고 나머지는 '더보기' 로 편다 */}
+          {store.menus && store.menus.length > 0
+            ? (() => {
+                const all = store.menus;
+                const shown = menusOpen ? all : all.slice(0, MENU_PREVIEW);
+                const rest = all.length - shown.length;
+                return (
+                  <>
+                    <Text style={styles.sectionTitle}>메뉴</Text>
+                    <View style={styles.card}>
+                      {shown.map((m, i) => (
+                        <View
+                          key={i}
+                          style={[
+                            styles.menuRow,
+                            (i < shown.length - 1 || rest > 0) && styles.infoRowBorder,
+                          ]}
+                        >
+                          <Text style={styles.menuName} numberOfLines={1}>{m.name}</Text>
+                          <Text style={styles.menuPrice}>
+                            {Number(m.price).toLocaleString('ko-KR')}원
+                          </Text>
+                        </View>
+                      ))}
+
+                      {rest > 0 || menusOpen ? (
+                        <TouchableOpacity
+                          style={styles.menuMore}
+                          onPress={() => setMenusOpen((v) => !v)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.menuMoreText}>
+                            {menusOpen ? '접기' : `메뉴 ${rest}개 더보기`}
+                          </Text>
+                          <Ionicons
+                            name={menusOpen ? 'chevron-up' : 'chevron-down'}
+                            size={15}
+                            color={colors.primary}
+                          />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </>
+                );
+              })()
+            : null}
 
           <Text style={styles.sectionTitle}>예약 가능 시간</Text>
           <View style={styles.timeWrap}>
@@ -422,6 +455,14 @@ const styles = StyleSheet.create({
   },
   menuName: { flex: 1, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
   menuPrice: { fontSize: 14, fontWeight: '800', color: colors.primary },
+  menuMore: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: spacing.md,
+  },
+  menuMoreText: { fontSize: 13.5, fontWeight: '800', color: colors.primary },
   timeWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   timeChip: {
     backgroundColor: colors.card,
