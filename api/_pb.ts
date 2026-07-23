@@ -38,9 +38,10 @@ export async function recordPbEvent(ev: {
   storeId?: string;
   ref?: string;
 }): Promise<PbEvent> {
+  // 회원의 단일 원천은 v2/users.json 이다. (구 members.json 통합)
   const [events, members] = await Promise.all([
     getJSON<any[]>('v2/pb_events.json', []),
-    getJSON<any[]>('v2/members.json', []),
+    getJSON<any[]>('v2/users.json', []),
   ]);
   const m = members.find((x) => x.id === ev.memberId);
   const signed = signedAmount(ev.type, ev.amount);
@@ -60,10 +61,10 @@ export async function recordPbEvent(ev: {
     date: new Date().toISOString().slice(0, 10),
     createdAt: Date.now(),
   };
-  await putJSON('v2/pb_events.json', [record, ...events]);
+  await putJSON('v2/pb_events.json', [record, ...events].slice(0, 20000));
   if (m) {
     m.pb = balanceAfter;
-    await putJSON('v2/members.json', members);
+    await putJSON('v2/users.json', members);
   }
   return record;
 }

@@ -1,15 +1,13 @@
-import { put } from '@vercel/blob';
-
-import { SEEDS } from './admin/data';
 import { addBite, allBites } from './_bites';
 import * as districts from './_districts';
 import * as entries from './_entries';
 import * as notifs from './_notifs';
+import * as push from './_push';
 import { recordPbEvent } from './_pb';
 import * as lk from './_livekit';
 import * as reservations from './_reservations';
 import * as stamps from './_stamps';
-import * as sb from './_supabase';
+import * as sb from './_chat';
 import {
   addComment as addPostComment,
   allPosts,
@@ -22,7 +20,7 @@ import {
 import * as saves from './_saves';
 import { readUid, readUserCookie } from './_session';
 import * as social from './_social';
-import { getJSON, putJSON, storeConfigured } from './_store';
+import { getJSON, putJSON, saveDataUrl, storeConfigured } from './_store';
 import { getUserById, User } from './_users';
 import * as wallet from './_wallet';
 
@@ -94,11 +92,8 @@ async function handleInvite(b: any, res: any) {
     res.status(400).json({ ok: false, error: 'no_code' });
     return;
   }
-  let members = await getJSON<any[]>('v2/members.json', []);
-  if (!members.length && Array.isArray(SEEDS.members)) {
-    members = SEEDS.members;
-    await putJSON('v2/members.json', members);
-  }
+  // 회원의 단일 원천은 v2/users.json — 소셜 가입자도 초대 코드를 쓸 수 있어야 한다.
+  const members = await getJSON<any[]>('v2/users.json', []);
   const inviter = members.find(
     (m) => (m.referralCode && norm(m.referralCode) === code) || norm(m.handle) === code
   );
@@ -130,11 +125,11 @@ async function handleInvite(b: any, res: any) {
     at: new Date().toISOString(),
   });
   await putJSON('v2/referrals.json', refs.slice(0, 2000));
-  const mem2 = await getJSON<any[]>('v2/members.json', []);
+  const mem2 = await getJSON<any[]>('v2/users.json', []);
   const idx = mem2.findIndex((m) => m.id === inviter.id);
   if (idx >= 0) {
     mem2[idx].referralCount = (Number(mem2[idx].referralCount) || 0) + 1;
-    await putJSON('v2/members.json', mem2);
+    await putJSON('v2/users.json', mem2);
   }
   res.status(200).json({
     ok: true,
@@ -143,6 +138,114 @@ async function handleInvite(b: any, res: any) {
     welcomePb: WELCOME_PB,
     referralBonus: REFERRAL_BONUS,
   });
+}
+
+// 내 당첨 내역 — 어드민 추첨 결과(products[].winnersList)와 배송 상태(shipments)를
+// 합쳐서 돌려준다. 이게 없으면 당첨돼도 앱에서 확인할 방법이 없다.
+// 배송 상태 문구는 앱의 WinItem 표기(수령전/배송중/수령완료)에 맞춰 변환한다.
+function shipStatusToApp(s: string): '수령전' | '배송중' | '수령완료' {
+  if (s === '완료') return '수령완료';
+  if (s === '발송') return '배송중';
+  return '수령전';
+}
+
+async function handleMyWins(uid: string, res: any) {
+  if (!uid) {
+    res.status(200).json({ ok: true, items: [] });
+    return;
+  }
+  const [products, shipments, me] = await Promise.all([
+    getJSON<any[]>('v2/products.json', []),
+    getJSON<any[]>('v2/shipments.json', []),
+    getUserById(uid),
+  ]);
+  const items: any[] = [];
+  for (const p of products) {
+    const won = (p.winnersList || []).find((w: any) => w && w.id === uid);
+    if (!won) continue;
+    // 배송 레코드는 winnerId 로 잇는다. 예전 데이터는 이름/핸들로 대조한다.
+    const ship = shipments.find(
+      (s) =>
+        (s.productId === p.id || s.product === p.name) &&
+        (s.winnerId === uid ||
+          (!!me && !!s.winnerName && s.winnerName === me.name) ||
+          (!!me && !!s.contact && s.contact === me.handle))
+    );
+    items.push({
+      id: p.id,
+      title: p.name || '경품',
+      image: p.image || '',
+      wonDate: won.date || p.drawnAt || '',
+      status: shipStatusToApp(String(ship?.status || '')),
+      method: ship?.method || '',
+      tracking: ship?.tracking || '',
+    });
+  }
+  items.sort((a, b) => String(b.wonDate).localeCompare(String(a.wonDate)));
+  res.status(200).json({ ok: true, items });
+}
+
+// 앱에서 들어온 신고 → 어드민 '모더레이션' 목록(v2/reports.json)에 그대로 쌓인다.
+// 어드민 스키마(target/reason/reporter/status)에 맞춰 저장해야 그 화면에서 보인다.
+const REPORT_REASONS = ['허위 리뷰', '중복 리뷰', '부적절', '스팸', '기타'];
+
+async function handleReport(uid: string, b: any, res: any) {
+  if (!uid) {
+    res.status(401).json({ ok: false, error: 'unauthorized' });
+    return;
+  }
+  const postId = String(b?.postId || '');
+  const reason = REPORT_REASONS.includes(String(b?.reason)) ? String(b.reason) : '기타';
+  if (!postId) {
+    res.status(400).json({ ok: false, error: 'no_post' });
+    return;
+  }
+  const [reports, me] = await Promise.all([
+    getJSON<any[]>('v2/reports.json', []),
+    getUserById(uid),
+  ]);
+  // 같은 사람이 같은 글을 여러 번 신고해도 목록이 더러워지지 않게 한 번만 받는다.
+  if (reports.some((r) => r?.postId === postId && r?.reporterId === uid)) {
+    res.status(200).json({ ok: true, already: true });
+    return;
+  }
+  const posts = await allPosts();
+  const target = posts.find((p) => p.id === postId);
+  reports.unshift({
+    id: `rp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
+    postId,
+    target: target ? `게시물 · ${String(target.caption || '').slice(0, 30)}` : `게시물 ${postId}`,
+    targetAuthorId: target?.authorId || '',
+    reason,
+    reporter: me?.handle || me?.name || uid,
+    reporterId: uid,
+    detail: String(b?.detail || '').slice(0, 300),
+    pbClaw: 0,
+    status: 'pending',
+    createdAt: Date.now(),
+  });
+  await putJSON('v2/reports.json', reports.slice(0, 5000));
+  res.status(200).json({ ok: true });
+}
+
+// 어드민 '공지·알림'에서 작성한 글을 앱 공지 화면에 그대로 내보낸다.
+// 예전에는 app/notice.tsx 에 공지가 하드코딩돼 있어서 어드민에서 쓴 글이
+// 앱에 뜨지 않았고, 공지 하나 고치려면 재배포가 필요했다.
+async function handleNotices(res: any) {
+  const raw = await getJSON<any[]>('v2/notices.json', []);
+  const items = raw
+    .filter((n) => n && n.status !== 'draft' && n.status !== 'inactive')
+    .map((n) => ({
+      id: String(n.id || ''),
+      title: String(n.title || ''),
+      content: String(n.body || n.content || ''),
+      date: String(n.date || '').replace(/-/g, '.'),
+      tag: String(n.tag || n.audience || '공지'),
+      pinned: !!n.pinned,
+    }))
+    // 고정 공지가 위로, 그 다음 최신순.
+    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.date.localeCompare(a.date));
+  res.status(200).json({ ok: true, items });
 }
 
 // ── 게시물(SNS) ──────────────────────────────────────────────────────────────
@@ -200,24 +303,10 @@ async function authorMapFor(posts: ServerPost[]): Promise<Record<string, User>> 
   return map;
 }
 
-// data URL 이미지를 Blob(v2/img/)에 저장하고 프록시 URL 반환.
+// data URL 이미지를 로컬 저장소(v2/img/)에 저장하고 프록시 URL 반환.
 async function uploadDataUrl(dataUrl: string): Promise<string> {
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  if (!token) return '';
-  const m = String(dataUrl).match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
-  if (!m) return '';
-  const contentType = m[1];
-  const buf = Buffer.from(m[2], 'base64');
-  const ext = contentType.split('/')[1].replace('jpeg', 'jpg').replace('svg+xml', 'svg');
-  const key = `v2/img/${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
-  await put(key, buf, {
-    access: 'private',
-    token,
-    contentType,
-    addRandomSuffix: false,
-    allowOverwrite: true,
-  } as any);
-  return `/api/blob?k=${encodeURIComponent(key)}`;
+  const saved = await saveDataUrl(dataUrl);
+  return saved ? saved.url : '';
 }
 
 // 이미지 입력(데이터URL 또는 기존 URL 혼합) → 저장된 URL 배열.
@@ -361,28 +450,92 @@ function toPartner(id: string, map: Record<string, User>) {
   };
 }
 
-// Supabase 실시간 채팅 브리지: 클라가 이 토큰으로 Supabase에 직접 연결(구독/전송).
+// 채팅 세션 확인 — 저장소가 서버 로컬이라 외부 토큰이 필요 없다.
+// 클라이언트는 이 응답으로 내 uid 만 확인하고, 이후 chatPoll 로 새 메시지를 받아간다.
 async function handleChatAuth(uid: string, res: any) {
   if (!uid) {
     res.status(401).json({ ok: false, error: 'unauthorized' });
     return;
   }
-  if (!sb.supabaseConfigured()) {
-    res.status(500).json({ ok: false, error: 'supabase_not_configured' });
+  // now = 폴링 시작점. 클라는 이 값을 since 로 써서 이후 메시지만 받아간다.
+  res.status(200).json({ ok: true, me: uid, mode: 'local', now: new Date().toISOString() });
+}
+
+// 폴링 — since(ISO) 이후 내 모든 대화방의 새 메시지. 실시간 구독을 대체한다.
+// now 를 읽기 "전"에 찍는 게 중요하다. 읽은 뒤에 찍으면 그 사이에 들어온 메시지가
+// 영영 안 잡힌다. 앞에서 찍으면 최악의 경우 같은 걸 두 번 주는데, 클라가 id로 걸러낸다.
+async function handleChatPoll(uid: string, since: string, res: any) {
+  const now = new Date().toISOString();
+  if (!uid) {
+    res.status(200).json({ ok: true, messages: [], now });
     return;
   }
-  res.status(200).json({
-    ok: true,
-    me: uid,
-    url: process.env.SUPABASE_URL,
-    anonKey: process.env.SUPABASE_ANON_KEY,
-    token: sb.signSupabaseJWT(uid),
-  });
+  const rows = await sb.newMessagesForUser(uid, since || undefined);
+  res.status(200).json({ ok: true, messages: rows, now });
+}
+
+// 대화방 전체 메시지(방 열 때 1회).
+async function handleChatMessages(uid: string, convId: string, res: any) {
+  if (!uid || !convId || !(await sb.isMember(uid, convId))) {
+    res.status(200).json({ ok: true, messages: [] });
+    return;
+  }
+  const rows = await sb.messagesOf(convId);
+  res.status(200).json({ ok: true, messages: rows });
+}
+
+// 메시지 전송 — 예전엔 클라가 Supabase에 직접 insert 했지만 이제 서버를 거친다.
+async function handleChatSend(uid: string, b: any, res: any) {
+  const convId = String(b?.conversationId || '');
+  const body = String(b?.text || '');
+  const image = b?.image ? String(b.image) : undefined;
+  if (!uid) {
+    res.status(401).json({ ok: false, error: 'unauthorized' });
+    return;
+  }
+  if (!convId || !(await sb.isMember(uid, convId))) {
+    res.status(403).json({ ok: false, error: 'not_a_member' });
+    return;
+  }
+  if (!body && !image) {
+    res.status(400).json({ ok: false, error: 'empty' });
+    return;
+  }
+  const row = await sb.insertMessage(convId, uid, body, image);
+  // 대화 상대에게 알림 + 푸시. 폴링 주기(2~15초)를 기다리지 않고 바로 알 수 있다.
+  if (row) {
+    try {
+      const [others, me] = await Promise.all([sb.membersOf(convId), getUserById(uid)]);
+      const preview = body ? body.slice(0, 60) : '사진을 보냈어요';
+      await Promise.all(
+        others
+          .filter((m) => m && m !== uid)
+          .map((to) =>
+            notifs.notify(to, {
+              type: 'dm',
+              title: me?.name || '새 메시지',
+              body: preview,
+              actorId: uid,
+            })
+          )
+      );
+    } catch {
+      // 알림 실패가 메시지 전송을 되돌리지는 않는다.
+    }
+  }
+  res.status(200).json({ ok: !!row, message: row });
+}
+
+// 읽음 처리.
+async function handleChatRead(uid: string, b: any, res: any) {
+  const convId = String(b?.conversationId || '');
+  if (uid && convId) await sb.markRead(uid, convId);
+  res.status(200).json({ ok: true });
 }
 
 // 내 대화방 목록(멤버 프로필 + 마지막 메시지 + 안읽음).
 async function handleChatList(uid: string, res: any) {
-  if (!uid || !sb.supabaseConfigured()) {
+  if (!uid) {
     res.status(200).json({ ok: true, me: uid || null, conversations: [] });
     return;
   }
@@ -977,15 +1130,32 @@ async function handleNotifsRead(uid: string, res: any) {
 
 export default async function handler(req: any, res: any) {
   const action = String((req.query && req.query.action) || '');
-  const uid = readUid(readUserCookie(req.headers?.cookie));
+  // 비로그인은 빈 문자열로 통일한다. 각 핸들러가 `if (!uid)` 로 거르므로 동작은
+  // 같고, null 이 섞여 들어가 타입이 어긋나던 문제가 사라진다.
+  const uid = readUid(readUserCookie(req.headers?.cookie)) || '';
 
   // ── GET (읽기) — store 미연결이어도 빈 값 반환 ──
   if (req.method === 'GET') {
     // 유저별 동적 응답 — 브라우저/CDN 캐시 금지(캐시되면 새 데이터가 안 보임).
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    // 채팅 인증/목록은 Blob(store)와 무관 — Supabase 사용.
+    // 채팅은 별도 로컬 컬렉션(v2/chat_*.json) — 아래 storeConfigured 게이트와 무관.
+    if (action === 'notices') return await handleNotices(res);
+    if (action === 'pushKey') {
+      // 클라이언트가 구독할 때 필요한 VAPID 공개키. 비밀키는 절대 내보내지 않는다.
+      res.status(200).json({
+        ok: true,
+        configured: push.pushConfigured(),
+        key: push.publicKey(),
+        subscribed: uid ? await push.hasSubscription(uid) : false,
+      });
+      return;
+    }
+    if (action === 'myWins') return await handleMyWins(uid, res);
     if (action === 'chatAuth') return await handleChatAuth(uid, res);
     if (action === 'chatList') return await handleChatList(uid, res);
+    if (action === 'chatPoll') return await handleChatPoll(uid, String(req.query.since || ''), res);
+    if (action === 'chatMessages')
+      return await handleChatMessages(uid, String(req.query.conversationId || ''), res);
     if (action === 'voiceHealth') {
       let mintOk = false;
       let err = '';
@@ -1041,6 +1211,27 @@ export default async function handler(req: any, res: any) {
     if (action === 'createPost') return await handleCreatePost(uid, b, res);
     if (action === 'editPost') return await handleEditPost(uid, b, res);
     if (action === 'deletePost') return await handleDeletePost(uid, b, res);
+    if (action === 'report') return await handleReport(uid, b, res);
+    if (action === 'pushSubscribe') {
+      await push.subscribe(uid, b?.subscription || b, String(req.headers?.['user-agent'] || ''));
+      res.status(200).json({ ok: true });
+      return;
+    }
+    if (action === 'pushUnsubscribe') {
+      await push.unsubscribe(String(b?.endpoint || ''));
+      res.status(200).json({ ok: true });
+      return;
+    }
+    if (action === 'notifDelete') {
+      const ok = await notifs.removeNotif(uid, String(b?.id || ''));
+      res.status(200).json({ ok });
+      return;
+    }
+    if (action === 'notifClear') {
+      const removed = await notifs.clearNotifs(uid);
+      res.status(200).json({ ok: true, removed });
+      return;
+    }
     if (action === 'comment') return await handleComment(uid, b, res);
     if (action === 'upload') return await handleUpload(uid, b, res);
     if (action === 'follow') return await handleFollow(uid, b, true, res);
@@ -1048,6 +1239,8 @@ export default async function handler(req: any, res: any) {
     if (action === 'chatStartDirect') return await handleChatStartDirect(uid, b, res);
     if (action === 'chatCreateGroup') return await handleChatCreateGroup(uid, b, res);
     if (action === 'chatNotify') return await handleChatNotify(uid, b, res);
+    if (action === 'chatSend') return await handleChatSend(uid, b, res);
+    if (action === 'chatRead') return await handleChatRead(uid, b, res);
     if (action === 'voiceToken') return await handleVoiceToken(uid, b, res);
     if (action === 'enterRaffle') return await handleEnterRaffle(uid, b, res);
     if (action === 'savePost') return await handleSavePost(uid, b, res);

@@ -1,7 +1,9 @@
 import { requireAdmin } from '../_auth';
+import { notify } from '../_notifs';
 import { recordPbEvent } from '../_pb';
 import { ensureWiped } from '../_reset';
 import { getJSON, putJSON, storeConfigured } from '../_store';
+import { withDefaults } from '../_users';
 
 // Generic admin CRUD over R2 JSON collections. One endpoint drives members,
 // products, shipments, ads and the finance ledger.
@@ -21,6 +23,10 @@ const ALLOWED = [
   'audit',
   'staff',
   'reviews',
+  // 앱이 쌓는 데이터. 어드민이 조회·관리할 수 있어야 한다.
+  'entries', // 경품 응모 기록 — 추첨의 근거
+  'posts', // 사용자 게시물 — 부적절 게시물 내리기
+  'reservations', // 매장 예약
 ];
 
 // Seed data so each section is populated on first open (materialised to R2 on
@@ -54,9 +60,15 @@ export const SEEDS: Record<string, any[]> = {
   ],
 };
 
+// 컬렉션 이름 → 실제 저장 파일. 기본은 v2/<이름>.json 이지만 회원은 예외다.
+// 어드민의 'members' 는 앱 가입자와 같은 v2/users.json 을 본다. 파일이 갈려
+// 있던 탓에 소셜 가입자가 어드민에 안 보이고 PB 잔액도 두 벌이었다.
+const FILE_OF: Record<string, string> = { members: 'v2/users.json' };
+const fileFor = (name: string) => FILE_OF[name] || `v2/${name}.json`;
+
 async function getCollection(name: string): Promise<any[]> {
   await ensureWiped();
-  const items = await getJSON<any[]>(`v2/${name}.json`, []);
+  const items = await getJSON<any[]>(fileFor(name), []);
   if ((!items || items.length === 0) && SEEDS[name]) return SEEDS[name];
   return items || [];
 }
@@ -114,6 +126,29 @@ export default async function handler(req: any, res: any) {
       }
     }
     const action = b?.action;
+    // 앱 알림 발송 — 전체(all) 또는 특정 회원(uids)에게 알림을 만든다.
+    // 추첨 당첨 통보와 어드민 공지 푸시가 모두 이 경로를 쓴다.
+    if (action === 'notify') {
+      try {
+        const title = String(b.title || '').slice(0, 100);
+        const body = String(b.body || '').slice(0, 500);
+        const type = String(b.type || 'notice');
+        if (!title) {
+          res.status(400).json({ ok: false, error: 'no_title' });
+          return;
+        }
+        let uids: string[] = Array.isArray(b.uids) ? b.uids.map(String).filter(Boolean) : [];
+        if (b.all) {
+          const users = await getJSON<any[]>('v2/users.json', []);
+          uids = users.map((u) => String(u?.id || '')).filter(Boolean);
+        }
+        for (const to of uids) await notify(to, { type, title, body });
+        res.status(200).json({ ok: true, sent: uids.length });
+      } catch (e: any) {
+        res.status(500).json({ ok: false, error: 'notify_failed', detail: String(e?.message || e) });
+      }
+      return;
+    }
     // PB 지급/회수/보정 — 원장 기록 + 회원 잔액 반영 (기존 /api/admin/pb 통합).
     if (action === 'grant') {
       try {
@@ -148,16 +183,30 @@ export default async function handler(req: any, res: any) {
       const labelOf = (o: any) =>
         o?.name || o?.title || o?.storeName || o?.winnerName || o?.category || o?.id || '';
       let auditLabel = '';
+      let newProductNotice: { name: string } | null = null;
       if (action === 'create') {
-        const item = {
+        let item: any = {
           ...b.item,
           id:
             b.item?.id ||
             `${c}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
           createdAt: Date.now(),
         };
+        // 어드민이 만든 회원도 앱 가입자와 같은 스키마를 갖춰야 목록·PB가 맞는다.
+        // id 접두사도 u_ 로 맞춰서 소셜 가입자와 구분 없이 다뤄지게 한다.
+        if (c === 'members') {
+          if (!b.item?.id) {
+            item.id = `u_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+          }
+          item = withDefaults(item);
+        }
         items = [item, ...items];
         auditLabel = labelOf(item);
+        // 새 경품 등록 → 전체 회원에게 알림 + 푸시. 응모 기회를 놓치지 않게 한다.
+        // 비활성(ended) 로 만든 경품은 알리지 않는다.
+        if (c === 'products' && item.status !== 'ended') {
+          newProductNotice = { name: String(item.name || '새 경품') };
+        }
       } else if (action === 'update') {
         items = items.map((it: any) => (it.id === b.item?.id ? { ...it, ...b.item } : it));
         auditLabel = labelOf(b.item);
@@ -168,7 +217,24 @@ export default async function handler(req: any, res: any) {
         res.status(400).json({ error: 'bad_action' });
         return;
       }
-      await putJSON(`v2/${c}.json`, items);
+      await putJSON(fileFor(c), items);
+      // 새 경품 알림 — 저장이 끝난 뒤에 보낸다(저장 실패 시 헛알림 방지).
+      if (newProductNotice) {
+        try {
+          const users = await getJSON<any[]>('v2/users.json', []);
+          for (const u of users) {
+            const to = String(u?.id || '');
+            if (!to) continue;
+            await notify(to, {
+              type: 'product',
+              title: '🎁 새 경품이 등록됐어요',
+              body: `'${newProductNotice.name}' 에 지금 응모할 수 있어요.`,
+            });
+          }
+        } catch {
+          // 알림 실패가 등록을 되돌리지는 않는다.
+        }
+      }
       // 감사 로그 (best-effort; 실패해도 본 작업엔 영향 없음).
       try {
         const audit = await getJSON<any[]>('v2/audit.json', []);

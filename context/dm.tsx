@@ -1,4 +1,3 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import React, {
   createContext,
   useCallback,
@@ -12,7 +11,13 @@ import { Platform } from 'react-native';
 
 import { imageUriToDataUrl, initialAvatar } from './feed';
 
-// 실시간 채팅 — Supabase Realtime(WebSocket 구독). 1:1 + 그룹(단체톡).
+// 채팅 — 서버(로컬 저장소) + 폴링. 1:1 + 그룹(단체톡).
+// 예전에는 Supabase Realtime(WebSocket)으로 서버가 새 메시지를 밀어줬는데, 지금은
+// 클라이언트가 짧은 주기로 새 메시지를 물어본다(POLL_MS). 탭이 백그라운드면 주기를
+// 늘려서 불필요한 요청을 줄인다.
+const POLL_MS = 2000; // 화면을 보고 있을 때
+const POLL_MS_HIDDEN = 15000; // 탭이 가려져 있을 때
+
 export type DmMessage = {
   id: string;
   from: string;
@@ -82,7 +87,7 @@ function toConversation(t: any, myId: string): DmConversation {
     unread: t.unread || 0,
   };
 }
-// Supabase messages 행 → DmMessage.
+// 서버 messages 행 → DmMessage.
 function rowToMsg(row: any, myId: string): DmMessage {
   return {
     id: row.id,
@@ -94,15 +99,25 @@ function rowToMsg(row: any, myId: string): DmMessage {
   };
 }
 
+const api = (qs: string) => `/api/public?action=${qs}`;
+async function postJSON(action: string, body: any): Promise<any> {
+  const r = await fetch(api(action), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return await r.json();
+}
+
 export function DmProvider({ children }: { children: React.ReactNode }) {
   const [conversations, setConversations] = useState<DmConversation[]>([]);
   const [messages, setMessages] = useState<Record<string, DmMessage[]>>({});
   const [myId, setMyId] = useState('');
   const myIdRef = useRef('');
-  const clientRef = useRef<SupabaseClient | null>(null);
   const openConvRef = useRef<string | null>(null);
-  const tokenRef = useRef({ token: '', at: 0 });
   const conversationsRef = useRef<DmConversation[]>([]);
+  const sinceRef = useRef<string>('');
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
@@ -111,7 +126,7 @@ export function DmProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     if (!isWeb()) return;
     try {
-      const r = await fetch('/api/public?action=chatList', { credentials: 'include' });
+      const r = await fetch(api('chatList'), { credentials: 'include' });
       const d = await r.json();
       if (d?.me) {
         myIdRef.current = d.me;
@@ -125,82 +140,16 @@ export function DmProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Supabase 클라이언트 초기화(내 쿠키 → JWT 브리지) + 실시간 구독.
-  useEffect(() => {
-    if (!isWeb()) return;
-    let channel: any = null;
-    let alive = true;
-    (async () => {
-      try {
-        const r = await fetch('/api/public?action=chatAuth', { credentials: 'include' });
-        const d = await r.json();
-        if (!alive || !d?.ok || !d.url || !d.anonKey || !d.token) return;
-        myIdRef.current = d.me;
-        setMyId(d.me);
-        tokenRef.current = { token: d.token, at: Date.now() };
-
-        const client = createClient(d.url, d.anonKey, {
-          auth: { persistSession: false, autoRefreshToken: false },
-          // 내 서버가 발급한 JWT를 REST/Realtime 인증에 사용(50분마다 갱신).
-          accessToken: async () => {
-            if (Date.now() - tokenRef.current.at > 50 * 60 * 1000) {
-              try {
-                const rr = await fetch('/api/public?action=chatAuth', { credentials: 'include' });
-                const dd = await rr.json();
-                if (dd?.token) {
-                  tokenRef.current = { token: dd.token, at: Date.now() };
-                  // 실시간 연결도 새 토큰으로 재인증.
-                  clientRef.current?.realtime.setAuth(dd.token);
-                }
-              } catch {
-                // keep old token
-              }
-            }
-            return tokenRef.current.token;
-          },
-          realtime: { params: { eventsPerSecond: 10 } },
-        });
-        clientRef.current = client;
-
-        // 실시간 WebSocket 을 내 JWT 로 인증(이게 없으면 RLS가 이벤트를 막아 수신 안 됨).
-        await client.realtime.setAuth(d.token);
-
-        // 내가 볼 수 있는(=내 대화방) 메시지 INSERT 실시간 수신(RLS로 필터).
-        channel = client
-          .channel('rt-messages')
-          .on(
-            'postgres_changes',
-            { event: 'INSERT', schema: 'public', table: 'messages' },
-            (payload: any) => {
-              onIncoming(payload.new);
-            }
-          )
-          .subscribe();
-
-        await refresh();
-      } catch {
-        // ignore
-      }
-    })();
-    return () => {
-      alive = false;
-      try {
-        if (channel && clientRef.current) clientRef.current.removeChannel(channel);
-      } catch {
-        // ignore
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 실시간 수신 메시지 처리.
+  // 새 메시지 처리(폴링으로 받은 행). 실시간 구독 콜백과 동일한 역할.
   const onIncoming = useCallback(
     (row: any) => {
       const cid = row.conversation_id;
       const msg = rowToMsg(row, myIdRef.current);
+      let isNew = false;
       setMessages((prev) => {
         const arr = prev[cid] || [];
-        if (arr.some((m) => m.id === msg.id)) return prev; // dedup
+        if (arr.some((m) => m.id === msg.id)) return prev; // dedup(재전달 대비)
+        isNew = true;
         return { ...prev, [cid]: [...arr, msg] };
       });
       let known = false;
@@ -217,7 +166,7 @@ export function DmProvider({ children }: { children: React.ReactNode }) {
       if (!known) refresh();
 
       // 브라우저 알림 — 내가 보낸 게 아니고, 그 방을 보고 있지 않을 때만.
-      if (isWeb() && !msg.fromMe) {
+      if (isWeb() && !msg.fromMe && isNew) {
         try {
           const N = (window as any).Notification;
           const visible = typeof document === 'undefined' || document.visibilityState === 'visible';
@@ -247,6 +196,72 @@ export function DmProvider({ children }: { children: React.ReactNode }) {
     },
     [refresh]
   );
+  const onIncomingRef = useRef(onIncoming);
+  useEffect(() => {
+    onIncomingRef.current = onIncoming;
+  }, [onIncoming]);
+
+  // 세션 확인 후 폴링 시작. setTimeout 체인이라 응답이 늦어도 요청이 겹치지 않는다.
+  useEffect(() => {
+    if (!isWeb()) return;
+    let alive = true;
+    let timer: any = null;
+
+    const tick = async () => {
+      if (!alive) return;
+      try {
+        const r = await fetch(api(`chatPoll&since=${encodeURIComponent(sinceRef.current)}`), {
+          credentials: 'include',
+        });
+        const d = await r.json();
+        if (!alive) return;
+        if (Array.isArray(d?.messages)) {
+          for (const row of d.messages) onIncomingRef.current(row);
+        }
+        if (d?.now) sinceRef.current = d.now;
+      } catch {
+        // 네트워크 오류는 무시하고 다음 주기에 재시도.
+      }
+      if (!alive) return;
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      timer = setTimeout(tick, hidden ? POLL_MS_HIDDEN : POLL_MS);
+    };
+
+    (async () => {
+      try {
+        const r = await fetch(api('chatAuth'), { credentials: 'include' });
+        const d = await r.json();
+        if (!alive || !d?.ok) return;
+        myIdRef.current = d.me;
+        setMyId(d.me);
+        sinceRef.current = d.now || new Date().toISOString();
+        await refresh();
+        tick();
+      } catch {
+        // ignore
+      }
+    })();
+
+    // 탭으로 돌아오면 곧바로 한 번 당겨온다(가려진 동안 주기가 길었으므로).
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        if (timer) clearTimeout(timer);
+        tick();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisible);
+    }
+
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisible);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 브라우저 알림 권한 요청(사용자 제스처에서 호출).
   const askNotifyPermission = useCallback(() => {
@@ -261,26 +276,21 @@ export function DmProvider({ children }: { children: React.ReactNode }) {
 
   const openConversation = useCallback(async (id: string) => {
     openConvRef.current = id;
-    const client = clientRef.current;
-    if (!client || !id) return;
+    if (!isWeb() || !id) return;
     try {
-      const { data } = await client
-        .from('messages')
-        .select('*')
-        .eq('conversation_id', id)
-        .order('created_at', { ascending: true })
-        .limit(500);
-      if (Array.isArray(data)) {
-        setMessages((prev) => ({ ...prev, [id]: data.map((m) => rowToMsg(m, myIdRef.current)) }));
+      const r = await fetch(api(`chatMessages&conversationId=${encodeURIComponent(id)}`), {
+        credentials: 'include',
+      });
+      const d = await r.json();
+      if (Array.isArray(d?.messages)) {
+        setMessages((prev) => ({
+          ...prev,
+          [id]: d.messages.map((m: any) => rowToMsg(m, myIdRef.current)),
+        }));
       }
       // 읽음 처리.
       setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, unread: 0 } : c)));
-      client
-        .from('conversation_members')
-        .update({ last_read_at: new Date().toISOString() })
-        .eq('conversation_id', id)
-        .eq('user_id', myIdRef.current)
-        .then(() => {});
+      postJSON('chatRead', { conversationId: id }).catch(() => {});
     } catch {
       // ignore
     }
@@ -288,48 +298,31 @@ export function DmProvider({ children }: { children: React.ReactNode }) {
 
   const markRead = useCallback((id: string) => {
     setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, unread: 0 } : c)));
-    const client = clientRef.current;
-    if (!client) return;
-    client
-      .from('conversation_members')
-      .update({ last_read_at: new Date().toISOString() })
-      .eq('conversation_id', id)
-      .eq('user_id', myIdRef.current)
-      .then(() => {});
+    if (!isWeb() || !id) return;
+    postJSON('chatRead', { conversationId: id }).catch(() => {});
   }, []);
 
   // 전송 후 상대 멤버 벨 알림.
   const notifyOthers = useCallback(
     (id: string, preview: string) => {
-      const conv = conversations.find((c) => c.id === id);
+      const conv = conversationsRef.current.find((c) => c.id === id);
       if (!conv) return;
-      fetch('/api/public?action=chatNotify', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          members: conv.members.map((m) => m.id),
-          preview,
-          isGroup: conv.isGroup,
-          title: conv.title,
-        }),
+      postJSON('chatNotify', {
+        members: conv.members.map((m) => m.id),
+        preview,
+        isGroup: conv.isGroup,
+        title: conv.title,
       }).catch(() => {});
     },
-    [conversations]
+    []
   );
 
   const insertMessage = useCallback(
     async (id: string, body: string, image: string | undefined, tmpId: string) => {
-      const client = clientRef.current;
-      if (!client) return;
       try {
-        const { data } = await client
-          .from('messages')
-          .insert({ conversation_id: id, from_user: myIdRef.current, body, image: image || null })
-          .select()
-          .single();
-        if (data) {
-          const real = rowToMsg(data, myIdRef.current);
+        const d = await postJSON('chatSend', { conversationId: id, text: body, image });
+        if (d?.ok && d.message) {
+          const real = rowToMsg(d.message, myIdRef.current);
           setMessages((prev) => {
             const arr = (prev[id] || []).filter((m) => m.id !== tmpId && m.id !== real.id);
             return { ...prev, [id]: [...arr, real] };
@@ -365,12 +358,7 @@ export function DmProvider({ children }: { children: React.ReactNode }) {
       (async () => {
         try {
           const dataUrl = await imageUriToDataUrl(uri);
-          const up = await fetch('/api/public?action=upload', {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dataUrl: dataUrl || uri }),
-          }).then((r) => r.json());
+          const up = await postJSON('upload', { dataUrl: dataUrl || uri });
           await insertMessage(id, '', up?.url || undefined, tmpId);
         } catch {
           // ignore
@@ -384,13 +372,7 @@ export function DmProvider({ children }: { children: React.ReactNode }) {
     async (uid: string): Promise<string | null> => {
       if (!isWeb() || !uid) return null;
       try {
-        const r = await fetch('/api/public?action=chatStartDirect', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uid }),
-        });
-        const d = await r.json();
+        const d = await postJSON('chatStartDirect', { uid });
         if (d?.ok && d.conversationId) {
           await refresh();
           return d.conversationId;
@@ -407,13 +389,7 @@ export function DmProvider({ children }: { children: React.ReactNode }) {
     async (memberIds: string[], title: string): Promise<string | null> => {
       if (!isWeb() || memberIds.length < 2) return null;
       try {
-        const r = await fetch('/api/public?action=chatCreateGroup', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ members: memberIds, title }),
-        });
-        const d = await r.json();
+        const d = await postJSON('chatCreateGroup', { members: memberIds, title });
         if (d?.ok && d.conversationId) {
           await refresh();
           return d.conversationId;

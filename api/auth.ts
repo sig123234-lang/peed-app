@@ -18,14 +18,26 @@ import { getUserById, publicUser, updateUser, upsertFromProvider } from './_user
 
 type Provider = 'kakao' | 'naver' | 'google';
 
-// 옛 NextAuth 앱이 콘솔에 등록해 둔 콜백 형식과 동일하게 맞춰, 콘솔 재설정 없이
-// 기존 등록을 재사용한다. (vercel.json 리라이트가 이 경로를 /api/auth로 보냄)
-function redirectUri(provider: Provider): string {
-  return `https://peed.co.kr/api/auth/callback/${provider}`;
+// 서비스가 실제로 떠 있는 주소. PUBLIC_BASE_URL 이 있으면 그것을 쓰고, 없으면 요청
+// 헤더에서 유추한다(리버스 프록시 뒤라 x-forwarded-proto 를 먼저 본다).
+// 이 값이 카카오/네이버/구글 콘솔에 등록한 주소와 정확히 같아야 로그인이 된다.
+function baseUrl(req: any): string {
+  const env = String(process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+  if (env) return env;
+  const h = req?.headers || {};
+  const host = String(h['x-forwarded-host'] || h.host || 'localhost:3000');
+  const proto = String(h['x-forwarded-proto'] || (host.startsWith('localhost') ? 'http' : 'https'));
+  return `${proto}://${host}`;
 }
 
-function authorizeUrl(provider: Provider, state: string): string {
-  const r = encodeURIComponent(redirectUri(provider));
+// 콜백 경로는 옛 NextAuth 형식을 그대로 유지한다(서버가 /api/auth 로 리라이트).
+// 로그인 시작과 토큰 교환에서 문자열이 완전히 동일해야 하므로 한 곳에서만 만든다.
+function redirectUri(req: any, provider: Provider): string {
+  return `${baseUrl(req)}/api/auth/callback/${provider}`;
+}
+
+function authorizeUrl(req: any, provider: Provider, state: string): string {
+  const r = encodeURIComponent(redirectUri(req, provider));
   const st = encodeURIComponent(state);
   if (provider === 'kakao') {
     return `https://kauth.kakao.com/oauth/authorize?response_type=code&client_id=${process.env.KAKAO_CLIENT_ID}&redirect_uri=${r}&state=${st}`;
@@ -38,12 +50,17 @@ function authorizeUrl(provider: Provider, state: string): string {
   )}&state=${st}`;
 }
 
-async function exchangeToken(provider: Provider, code: string, state: string): Promise<string | null> {
+async function exchangeToken(
+  req: any,
+  provider: Provider,
+  code: string,
+  state: string
+): Promise<string | null> {
   let url = '';
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
-    redirect_uri: redirectUri(provider),
+    redirect_uri: redirectUri(req, provider),
   });
   if (provider === 'kakao') {
     url = 'https://kauth.kakao.com/oauth/token';
@@ -121,10 +138,22 @@ export default async function handler(req: any, res: any) {
       res.status(400).json({ ok: false, error: 'bad_provider' });
       return;
     }
+    // 키가 아직 안 들어왔으면 제공자로 보내봐야 client_id 없음 오류만 본다.
+    // 무엇이 비었는지 알 수 있게 앱으로 돌려보낸다.
+    const clientId =
+      provider === 'kakao'
+        ? process.env.KAKAO_CLIENT_ID
+        : provider === 'naver'
+          ? process.env.NAVER_CLIENT_ID
+          : process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      redirect(res, `/?login=notconfigured&provider=${provider}`);
+      return;
+    }
     const state = Buffer.from(
       JSON.stringify({ provider, n: Math.random().toString(36).slice(2) })
     ).toString('base64url');
-    redirect(res, authorizeUrl(provider, state));
+    redirect(res, authorizeUrl(req, provider, state));
     return;
   }
 
@@ -199,7 +228,7 @@ export default async function handler(req: any, res: any) {
       return;
     }
     try {
-      const token = await exchangeToken(provider, String(q.code), String(q.state));
+      const token = await exchangeToken(req, provider, String(q.code), String(q.state));
       if (!token) return redirect(res, '/?login=token');
       const prof = await fetchProfile(provider, token);
       if (!prof) return redirect(res, '/?login=profile');

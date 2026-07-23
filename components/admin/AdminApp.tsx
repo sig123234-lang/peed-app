@@ -15,6 +15,9 @@ import {
 
 import { colors, radius, shadow, spacing, type } from '@/theme';
 
+// 상단바와 본문이 공유하는 최대 폭. 한 값에서 나와야 좌측 기준선이 어긋나지 않는다.
+const CONTENT_MAX = 1100;
+
 const BURNING_MONTHLY_FEE = 200000; // 버닝 매장 월 구독료
 const PRIZE_BUDGET_RATE = 0.5; // 구독 매출의 50%를 경품 구매에
 const PB_PER_BURNING = 10; // 버닝 매장 리뷰 시 지급 PB
@@ -354,6 +357,8 @@ const SECTIONS = [
   { key: 'campaigns', label: '슈퍼 버닝', icon: 'rocket-outline' },
   { key: 'products', label: '상품(경품)', icon: 'gift-outline' },
   { key: 'shipments', label: '배송·수여', icon: 'cube-outline' },
+  { key: 'posts', label: '게시물 관리', icon: 'images-outline' },
+  { key: 'reservations', label: '예약 관리', icon: 'calendar-outline' },
   { key: 'reports', label: '모더레이션', icon: 'shield-checkmark-outline' },
   { key: 'ads', label: '광고 관리', icon: 'megaphone-outline' },
   { key: 'finance', label: '매출·지출', icon: 'card-outline' },
@@ -485,6 +490,37 @@ const SCHEMAS: Record<
   },
 };
 
+/* 공지 → 전체 회원 앱 알림 발송. 공지를 '게시'하는 것과 '알리는' 것은 다른 행동이라
+   목록에서 명시적으로 누를 때만 나간다(저장할 때 자동 발송하지 않는다). */
+const SEND_NOTICE_ACTION = {
+  icon: 'megaphone-outline',
+  onPress: async (item: any) => {
+    const title = String(item?.title || '').trim();
+    if (!title) {
+      toast('제목이 없는 공지는 보낼 수 없어요', 'err');
+      return;
+    }
+    if (!confirmAction(`'${title}'\n\n전체 회원에게 앱 알림으로 보낼까요?`)) return;
+    try {
+      const r = await api('data?c=members', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'notify',
+          all: true,
+          type: 'notice',
+          title,
+          body: String(item?.body || '').slice(0, 300),
+        }),
+      });
+      const d = await r.json();
+      toast(d?.ok ? `${d.sent}명에게 알림을 보냈어요` : '발송 실패', d?.ok ? 'ok' : 'err');
+    } catch {
+      toast('발송 실패', 'err');
+    }
+  },
+};
+
 const COLLECTION_SUB: Record<string, string> = {
   members: '회원 조회 · PB · 상태 · 권한',
   staff: '내부 직원 · 영업 담당은 매장 배정 시 이 목록에서 선택돼요',
@@ -562,25 +598,29 @@ function Console({ identity, onLogout }: { identity: AdminIdentity | null; onLog
       {!isMobile && <View style={styles.sidebar}>{sidebarBody}</View>}
 
       <View style={styles.mainCol}>
-        <View style={[styles.topbar, isMobile && { paddingHorizontal: spacing.md }]}>
-          <View style={styles.topbarLeft}>
-            {isMobile ? (
-              <TouchableOpacity style={styles.hamburger} onPress={() => setNavOpen(true)} hitSlop={8}>
-                <Ionicons name="menu" size={24} color={colors.textPrimary} />
-              </TouchableOpacity>
-            ) : null}
-            <Text style={styles.topbarTitle} numberOfLines={1}>{cur?.label}</Text>
-          </View>
-          <View style={styles.adminChip}>
-            <View style={styles.adminAvatar}>
-              <Text style={styles.adminAvatarText}>{(identity?.name || 'A').slice(0, 1)}</Text>
+        {/* 상단바 안쪽을 아래 본문과 같은 폭·여백으로 묶는다. 그래야 페이지 제목과
+            본문 첫 줄의 왼쪽 끝이 한 선에 맞는다. */}
+        <View style={styles.topbar}>
+          <View style={[styles.topbarInner, isMobile && styles.topbarInnerMobile]}>
+            <View style={styles.topbarLeft}>
+              {isMobile ? (
+                <TouchableOpacity style={styles.hamburger} onPress={() => setNavOpen(true)} hitSlop={8}>
+                  <Ionicons name="menu" size={24} color={colors.textPrimary} />
+                </TouchableOpacity>
+              ) : null}
+              <Text style={styles.topbarTitle} numberOfLines={1}>{cur?.label}</Text>
             </View>
-            {!isMobile ? (
-              <Text style={styles.adminChipText}>
-                {identity?.name || '관리자'}
-                {identity?.position ? ` · ${identity.position}` : ''}
-              </Text>
-            ) : null}
+            <View style={styles.adminChip}>
+              <View style={styles.adminAvatar}>
+                <Text style={styles.adminAvatarText}>{(identity?.name || 'A').slice(0, 1)}</Text>
+              </View>
+              {!isMobile ? (
+                <Text style={styles.adminChipText}>
+                  {identity?.name || '관리자'}
+                  {identity?.position ? ` · ${identity.position}` : ''}
+                </Text>
+              ) : null}
+            </View>
           </View>
         </View>
         <ScrollView
@@ -596,8 +636,18 @@ function Console({ identity, onLogout }: { identity: AdminIdentity | null; onLog
           {section === 'pb' && <PbLedgerView />}
           {section === 'staff' && canStaff && <StaffSection />}
           {section === 'shipments' && <ShipmentsSection />}
-          {!['products', 'members', 'pb', 'staff', 'shipments'].includes(section) && SCHEMAS[section] ? (
-            <CollectionManager key={section} collection={section} {...SCHEMAS[section]} />
+          {section === 'posts' && <PostsSection />}
+          {section === 'reservations' && <ReservationsSection />}
+          {!['products', 'members', 'pb', 'staff', 'shipments', 'posts', 'reservations'].includes(
+            section
+          ) && SCHEMAS[section] ? (
+            <CollectionManager
+              key={section}
+              collection={section}
+              {...SCHEMAS[section]}
+              // 공지는 목록에서 바로 전체 회원에게 앱 알림으로 쏠 수 있게 한다.
+              extraAction={section === 'notices' ? SEND_NOTICE_ACTION : undefined}
+            />
           ) : null}
         </ScrollView>
       </View>
@@ -702,9 +752,14 @@ function DashboardView({ onGo }: { onGo: (s: string) => void }) {
           <View style={styles.gaugeTrack}>
             <View style={[styles.gaugeFill, { width: `${budgetUse * 100}%` }]} />
           </View>
-          <Text style={styles.muted}>
-            등록 상품 시가 {won(prizeValue)}{'\n'}/ 경품 예산 {won(prizeBudget)}
-          </Text>
+          <View style={styles.gaugeLegend}>
+            <Text style={styles.gaugeLegendLabel}>등록 상품 시가</Text>
+            <Text style={styles.gaugeLegendVal}>{won(prizeValue)}</Text>
+          </View>
+          <View style={[styles.gaugeLegend, styles.rowLast]}>
+            <Text style={styles.gaugeLegendLabel}>경품 예산</Text>
+            <Text style={styles.gaugeLegendVal}>{won(prizeBudget)}</Text>
+          </View>
         </View>
       </View>
 
@@ -719,11 +774,11 @@ function DashboardView({ onGo }: { onGo: (s: string) => void }) {
             <Text style={styles.pbLabel}>총 발행</Text>
             <Text style={styles.pbVal}>{pbIssued} PB</Text>
           </View>
-          <View style={styles.pbRow}>
+          <View style={[styles.pbRow, styles.rowLast]}>
             <Text style={styles.pbLabel}>총 사용</Text>
             <Text style={[styles.pbVal, { color: colors.coral }]}>−{pbSpent} PB</Text>
           </View>
-          <TouchableOpacity onPress={() => onGo('pb')}>
+          <TouchableOpacity style={styles.cardLink} onPress={() => onGo('pb')}>
             <Text style={styles.linkText}>PB 원장 →</Text>
           </TouchableOpacity>
         </View>
@@ -737,8 +792,8 @@ function DashboardView({ onGo }: { onGo: (s: string) => void }) {
           {recent.length === 0 ? (
             <Text style={styles.muted}>신청 내역이 없어요.</Text>
           ) : (
-            recent.map((a) => (
-              <View key={a.id} style={styles.recentRow}>
+            recent.map((a, ri) => (
+              <View key={a.id} style={[styles.recentRow, ri === recent.length - 1 && styles.rowLast]}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.recentName} numberOfLines={1}>{a.storeName}</Text>
                   <Text style={styles.recentMeta} numberOfLines={1}>{a.region}</Text>
@@ -2566,17 +2621,20 @@ function ProductsSection() {
   const [tab, setTab] = useState<'all' | 'active' | 'ended'>('all');
   const [editing, setEditing] = useState<any | null>(null);
   const [detail, setDetail] = useState<any | null>(null);
+  const [entries, setEntries] = useState<any[]>([]);
 
   const refresh = async () => {
     try {
-      const [p, m, s] = await Promise.all([
+      const [p, m, s, e] = await Promise.all([
         api('data?c=products').then((r) => r.json()),
         api('data?c=members').then((r) => r.json()),
         api('data?c=stores').then((r) => r.json()),
+        api('data?c=entries').then((r) => r.json()),
       ]);
       setProducts(Array.isArray(p.items) ? p.items : []);
       setMembers(Array.isArray(m.items) ? m.items : []);
       setStores(Array.isArray(s.items) ? s.items : []);
+      setEntries(Array.isArray(e.items) ? e.items : []);
     } catch {
       // ignore
     } finally {
@@ -2596,11 +2654,9 @@ function ProductsSection() {
   const over = catalogValue > budget;
 
   const eligibleCount = (p: any) => {
-    const cut = Number(p.pbCost) || 0;
+    const counts = entryCountsFor(entries, p.id);
     const won = new Set((p.winnersList || []).map((w: any) => w.id));
-    return members.filter(
-      (m) => memberTypeOf(m) === '일반' && (Number(m.pb) || 0) >= cut && !won.has(m.id)
-    ).length;
+    return Object.keys(counts).filter((uid) => counts[uid] > 0 && !won.has(uid)).length;
   };
 
   const isEnded = (p: any) => p.status === 'ended' || !!p.drawnAt;
@@ -2712,11 +2768,16 @@ function ProductsSection() {
         <Empty text={tab === 'ended' ? '마감된 상품이 없어요.' : tab === 'active' ? '진행중 상품이 없어요.' : '등록된 상품이 없어요.'} />
       ) : (
         <View style={styles.table}>
-          {shown.map((p) => {
+          {shown.map((p, ri) => {
             const ended = isEnded(p);
             const winN = (p.winnersList || []).length;
             return (
-              <TouchableOpacity key={p.id} style={styles.prodRow} activeOpacity={0.7} onPress={() => setDetail(p)}>
+              <TouchableOpacity
+                key={p.id}
+                style={[styles.prodRow, ri === shown.length - 1 && styles.rowLast]}
+                activeOpacity={0.7}
+                onPress={() => setDetail(p)}
+              >
                 {p.image ? (
                   <Image source={{ uri: p.image }} style={styles.prodThumb} resizeMode="cover" />
                 ) : (
@@ -2757,6 +2818,7 @@ function ProductsSection() {
           product={detail}
           members={members}
           products={products}
+          entries={entries}
           onClose={() => setDetail(null)}
           onEdit={() => {
             setEditing(detail);
@@ -2782,11 +2844,290 @@ function ProductsSection() {
   );
 }
 
+/* ======================================================== 게시물 · 예약 관리
+   앱이 쌓는 데이터(v2/posts.json, v2/reservations.json)를 어드민에서 조회하고
+   부적절한 게시물은 내릴 수 있게 한다. 어드민이 새로 만드는 데이터가 아니므로
+   '추가' 버튼 없이 조회·삭제·상태변경만 제공한다. */
+function PostsSection() {
+  const [posts, setPosts] = useState<any[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+  const PAGE = 30;
+
+  const refresh = async () => {
+    try {
+      const [p, m] = await Promise.all([
+        api('data?c=posts').then((r) => r.json()),
+        api('data?c=members').then((r) => r.json()),
+      ]);
+      setPosts(Array.isArray(p.items) ? p.items : []);
+      setMembers(Array.isArray(m.items) ? m.items : []);
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const nameOf = useMemo(() => {
+    const map: Record<string, any> = {};
+    members.forEach((m) => (map[m.id] = m));
+    return map;
+  }, [members]);
+
+  const del = async (p: any) => {
+    if (!confirmAction(`이 게시물을 삭제할까요? 되돌릴 수 없습니다.\n\n"${String(p.caption || '').slice(0, 40)}"`)) return;
+    await api('data?c=posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete', id: p.id }),
+    });
+    toast('게시물이 삭제되었습니다');
+    refresh();
+  };
+
+  const shown = q.trim()
+    ? posts.filter((p) =>
+        JSON.stringify(Object.values(p)).toLowerCase().includes(q.trim().toLowerCase())
+      )
+    : posts;
+  const paged = shown.slice(0, page * PAGE);
+  const burning = posts.filter((p) => p.isBurning).length;
+  const privateN = posts.filter((p) => p.isPrivate).length;
+
+  return (
+    <View>
+      <SectionTitle title="게시물 관리" sub="앱 사용자가 올린 게시물 · 부적절한 글은 여기서 내려요" />
+
+      <View style={styles.kpiRow}>
+        <Kpi icon="images" label="전체 게시물" value={`${posts.length}`} />
+        <Kpi icon="flame" label="버닝 리뷰" value={`${burning}`} accent />
+        <Kpi icon="lock-closed" label="비공개" value={`${privateN}`} />
+      </View>
+
+      <View style={styles.searchBar}>
+        <Ionicons name="search" size={16} color={colors.textTertiary} />
+        <TextInput
+          style={styles.searchInput}
+          value={q}
+          onChangeText={setQ}
+          placeholder="내용·매장·작성자 검색"
+          placeholderTextColor={colors.textTertiary}
+        />
+        <Text style={styles.countText}>{shown.length}건</Text>
+      </View>
+
+      {loading ? (
+        <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.xl }} />
+      ) : shown.length === 0 ? (
+        <Empty text={q ? '검색 결과가 없어요.' : '올라온 게시물이 없어요.'} />
+      ) : (
+        <View style={styles.table}>
+          {paged.map((p, ri) => {
+            const author = nameOf[p.authorId];
+            return (
+              <View key={p.id} style={[styles.prodRow, ri === paged.length - 1 && styles.rowLast]}>
+                {p.image ? (
+                  <Image source={{ uri: p.image }} style={styles.prodThumb} resizeMode="cover" />
+                ) : (
+                  <View style={[styles.prodThumb, styles.thumbEmpty]}>
+                    <Ionicons name="chatbox-outline" size={18} color={colors.textTertiary} />
+                  </View>
+                )}
+                <View style={{ flex: 1, minWidth: 0 as any }}>
+                  <View style={styles.prodTitleRow}>
+                    <Text style={styles.memberName} numberOfLines={1}>
+                      {author?.name || '알 수 없음'} {author?.handle ? `· ${author.handle}` : ''}
+                    </Text>
+                    {p.isBurning ? <Badge value="버닝" /> : null}
+                  </View>
+                  <Text style={styles.memberSub} numberOfLines={2}>
+                    {String(p.caption || '(내용 없음)')}
+                  </Text>
+                  <Text style={styles.recentMeta} numberOfLines={1}>
+                    {[
+                      p.store,
+                      p.isPrivate ? '비공개' : '공개',
+                      `저장 ${Number(p.saveCount) || 0}`,
+                      `댓글 ${(p.comments || []).length}`,
+                      new Date(Number(p.createdAt) || 0).toISOString().slice(0, 10),
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => del(p)} hitSlop={8}>
+                  <Ionicons name="trash-outline" size={18} color={colors.coral} />
+                </TouchableOpacity>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {paged.length < shown.length ? (
+        <TouchableOpacity style={styles.pageBtn} onPress={() => setPage((n) => n + 1)}>
+          <Text style={styles.pageBtnText}>더 보기 ({paged.length}/{shown.length})</Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+}
+
+const RESERVATION_STATUS = ['예약', '방문완료', '취소'];
+
+function ReservationsSection() {
+  const [items, setItems] = useState<any[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
+  const [filter, setFilter] = useState<'all' | string>('all');
+
+  const refresh = async () => {
+    try {
+      const [r, m] = await Promise.all([
+        api('data?c=reservations').then((res) => res.json()),
+        api('data?c=members').then((res) => res.json()),
+      ]);
+      setItems(Array.isArray(r.items) ? r.items : []);
+      setMembers(Array.isArray(m.items) ? m.items : []);
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const nameOf = useMemo(() => {
+    const map: Record<string, any> = {};
+    members.forEach((m) => (map[m.id] = m));
+    return map;
+  }, [members]);
+
+  const setStatus = async (item: any, status: string) => {
+    await api('data?c=reservations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'update', item: { ...item, status } }),
+    });
+    toast(`'${status}' 로 변경되었습니다`);
+    refresh();
+  };
+
+  const searched = q.trim()
+    ? items.filter((r) =>
+        JSON.stringify(Object.values(r)).toLowerCase().includes(q.trim().toLowerCase())
+      )
+    : items;
+  const shown = filter === 'all' ? searched : searched.filter((r) => (r.status || '예약') === filter);
+  const countOf = (s: string) => items.filter((r) => (r.status || '예약') === s).length;
+
+  return (
+    <View>
+      <SectionTitle title="예약 관리" sub="앱에서 들어온 매장 방문 예약 · 상태를 여기서 바꿔요" />
+
+      <View style={styles.kpiRow}>
+        <Kpi icon="calendar" label="전체 예약" value={`${items.length}`} />
+        <Kpi icon="time" label="예약 대기" value={`${countOf('예약')}`} accent />
+        <Kpi icon="checkmark-circle" label="방문 완료" value={`${countOf('방문완료')}`} />
+        <Kpi icon="close-circle" label="취소" value={`${countOf('취소')}`} />
+      </View>
+
+      <View style={styles.statusRow}>
+        {['all', ...RESERVATION_STATUS].map((s) => (
+          <TouchableOpacity
+            key={s}
+            style={[styles.statusChip, filter === s && styles.statusChipOn]}
+            onPress={() => setFilter(s)}
+          >
+            <Text style={[styles.statusChipText, filter === s && styles.statusChipTextOn]}>
+              {s === 'all' ? `전체 ${items.length}` : `${s} ${countOf(s)}`}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <View style={styles.searchBar}>
+        <Ionicons name="search" size={16} color={colors.textTertiary} />
+        <TextInput
+          style={styles.searchInput}
+          value={q}
+          onChangeText={setQ}
+          placeholder="매장·예약자 검색"
+          placeholderTextColor={colors.textTertiary}
+        />
+        <Text style={styles.countText}>{shown.length}건</Text>
+      </View>
+
+      {loading ? (
+        <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.xl }} />
+      ) : shown.length === 0 ? (
+        <Empty text={q || filter !== 'all' ? '해당하는 예약이 없어요.' : '들어온 예약이 없어요.'} />
+      ) : (
+        <View style={styles.table}>
+          {shown.map((r, ri) => {
+            const who = nameOf[r.uid];
+            return (
+              <View key={r.id} style={[styles.prodRow, ri === shown.length - 1 && styles.rowLast]}>
+                <View style={{ flex: 1, minWidth: 0 as any }}>
+                  <View style={styles.prodTitleRow}>
+                    <Text style={styles.memberName} numberOfLines={1}>{r.storeName || '-'}</Text>
+                    <Badge value={r.status || '예약'} />
+                  </View>
+                  <Text style={styles.memberSub} numberOfLines={1}>
+                    {[
+                      who?.name || '알 수 없음',
+                      who?.handle,
+                      `${r.date || '-'} ${r.time || ''}`.trim(),
+                      `${Number(r.people) || 1}명`,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </Text>
+                </View>
+                <Dropdown
+                  value={r.status || '예약'}
+                  options={RESERVATION_STATUS}
+                  onChange={(v) => setStatus(r, v)}
+                />
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+}
+
+/* 경품 응모권 집계 — 앱에서 실제로 응모(PB 차감)한 기록 v2/entries.json 이 근거다.
+   예전에는 '보유 PB ÷ 응모비용' 으로 추정했는데, 응모하면 PB가 차감되는 구조라
+   실제로 응모한 사람일수록 오히려 응모권이 줄어드는 정반대 결과가 나왔다.
+   응모를 한 번도 안 한 회원이 당첨되는 것도 막는다. */
+function entryCountsFor(entries: any[], productId: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const e of entries) {
+    if (!e || e.productId !== productId) continue;
+    const uid = String(e.uid || '');
+    if (!uid) continue;
+    out[uid] = (out[uid] || 0) + (Number(e.count) || 0);
+  }
+  return out;
+}
+
 // 상품 상세 — 응모 현황·대상자·추첨(이력·중복방지·발표)·수정.
 function ProductDetail({
   product,
   members,
   products,
+  entries,
   onClose,
   onEdit,
   onDelete,
@@ -2795,6 +3136,7 @@ function ProductDetail({
   product: any;
   members: any[];
   products: any[];
+  entries: any[];
   onClose: () => void;
   onEdit: () => void;
   onDelete: (id: string) => void;
@@ -2813,12 +3155,12 @@ function ProductDetail({
   const globalWonIds = new Set<string>();
   products.forEach((pr) => (pr.winnersList || []).forEach((w: any) => globalWonIds.add(w.id)));
 
-  // 응모 가능 횟수 = 보유 PB ÷ 응모 비용 (많이 모을수록 응모권↑ = 확률↑).
-  const entriesOf = (m: any) => Math.floor((Number(m.pb) || 0) / cost);
+  // 응모권 = 앱에서 실제로 응모한 횟수. 여러 번 응모할수록 확률이 올라간다.
+  const counts = entryCountsFor(entries, p.id);
+  const entriesOf = (m: any) => counts[m.id] || 0;
   const eligible = members
     .filter(
       (m) =>
-        memberTypeOf(m) === '일반' &&
         entriesOf(m) >= 1 &&
         !wonIds.has(m.id) &&
         (!excludeGlobal || !globalWonIds.has(m.id))
@@ -2881,6 +3223,8 @@ function ProductDetail({
             action: 'create',
             item: {
               productId: p.id,
+              // 당첨자 uid — 앱의 '당첨' 탭이 이 값으로 배송 상태를 찾는다.
+              winnerId: w.id,
               product: p.name,
               image: p.image || '',
               winnerName: w.name,
@@ -2896,9 +3240,28 @@ function ProductDetail({
           }),
         });
       }
+      // 당첨자에게 앱 알림 발송 — 이게 없으면 당첨돼도 사용자가 알 수 없다.
+      let notified = 0;
+      try {
+        const nr = await api('data?c=members', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'notify',
+            uids: preview.map((w) => w.id),
+            type: 'raffle',
+            title: '🎉 경품에 당첨되셨어요!',
+            body: `'${p.name}' 에 당첨되셨습니다. 마이 > 당첨 탭에서 확인해 주세요.`,
+          }),
+        });
+        const nd = await nr.json();
+        notified = Number(nd?.sent) || 0;
+      } catch {
+        // 알림 실패가 추첨 확정을 되돌리지는 않는다.
+      }
       setP(updated);
       setPreview(null);
-      toast(`${preview.length}명 당첨 확정 · 배송 생성됨`);
+      toast(`${preview.length}명 당첨 확정 · 배송 생성 · 알림 ${notified}건 발송`);
       onRefresh();
     } catch {
       alert('추첨 저장 오류');
@@ -3233,25 +3596,25 @@ const STATUS_BY_METHOD: Record<string, string[]> = {
 
 function ShipmentsSection() {
   const [products, setProducts] = useState<any[]>([]);
-  const [members, setMembers] = useState<any[]>([]);
   const [shipments, setShipments] = useState<any[]>([]);
   const [reviews, setReviews] = useState<any[]>([]);
+  const [entries, setEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<any | null>(null);
 
   const refresh = async () => {
     try {
-      const [p, m, s, rv] = await Promise.all([
+      const [p, s, rv, e] = await Promise.all([
         api('data?c=products').then((r) => r.json()),
-        api('data?c=members').then((r) => r.json()),
         api('data?c=shipments').then((r) => r.json()),
         api('data?c=reviews').then((r) => r.json()),
+        api('data?c=entries').then((r) => r.json()),
       ]);
       setProducts(Array.isArray(p.items) ? p.items : []);
-      setMembers(Array.isArray(m.items) ? m.items : []);
       setShipments(Array.isArray(s.items) ? s.items : []);
       setReviews(Array.isArray(rv.items) ? rv.items : []);
+      setEntries(Array.isArray(e.items) ? e.items : []);
     } catch {
       // ignore
     } finally {
@@ -3277,12 +3640,7 @@ function ShipmentsSection() {
   };
   const effReviewed = (s: any) => s.reviewed === '작성완료' || autoReviewed(s);
 
-  const eligibleCount = (p: any) => {
-    const cost = Number(p.pbCost) || 1;
-    return members.filter(
-      (m) => memberTypeOf(m) === '일반' && Math.floor((Number(m.pb) || 0) / cost) >= 1
-    ).length;
-  };
+  const eligibleCount = (p: any) => Object.keys(entryCountsFor(entries, p.id)).length;
   // 추첨 대기 = 진행중(마감/추첨 전) 상품 — 상품에서 직접 도출(항상 최신).
   const pending = products.filter((p) => !p.drawnAt && (p.winnersList || []).length === 0 && p.status !== 'ended');
   // 당첨자 배송 = 실제 당첨자가 있는 배송 레코드.
@@ -3343,8 +3701,8 @@ function ShipmentsSection() {
             <Empty text="추첨 대기 상품이 없어요." />
           ) : (
             <View style={styles.table}>
-              {pending.map((p) => (
-                <View key={p.id} style={styles.prodRow}>
+              {pending.map((p, ri) => (
+                <View key={p.id} style={[styles.prodRow, ri === pending.length - 1 && styles.rowLast]}>
                   {p.image ? (
                     <Image source={{ uri: p.image }} style={styles.prodThumb} resizeMode="cover" />
                   ) : (
@@ -3381,11 +3739,16 @@ function ShipmentsSection() {
             <Empty text="배송 내역이 없어요." />
           ) : (
             <View style={styles.table}>
-              {dShown.map((s) => {
+              {dShown.map((s, ri) => {
                 const reviewed = effReviewed(s);
                 const auto = reviewed && s.reviewed !== '작성완료' && autoReviewed(s);
                 return (
-                  <TouchableOpacity key={s.id} style={styles.prodRow} activeOpacity={0.7} onPress={() => setEditing(s)}>
+                  <TouchableOpacity
+                    key={s.id}
+                    style={[styles.prodRow, ri === dShown.length - 1 && styles.rowLast]}
+                    activeOpacity={0.7}
+                    onPress={() => setEditing(s)}
+                  >
                     <View style={{ flex: 1, minWidth: 0 as any }}>
                       <View style={styles.prodTitleRow}>
                         <Text style={styles.memberName} numberOfLines={1}>{s.product || '-'}</Text>
@@ -3585,6 +3948,10 @@ const PB_TYPE_LABEL: Record<string, string> = {
 // 회원 관리 = 일반 CollectionManager + 행별 'PB 조정' 액션.
 const memberTypeOf = (m: any): '일반' | '기업' => (m?.memberType === '기업' ? '기업' : '일반');
 
+// 소셜 로그인으로 가입했는지, 어드민이 직접 만든 계정인지 한눈에 구분한다.
+const PROVIDER_KO: Record<string, string> = { kakao: '카카오', naver: '네이버', google: '구글' };
+const joinPathOf = (m: any): string => PROVIDER_KO[String(m?.provider || '')] || '직접등록';
+
 function genLoginId(seed: string) {
   const slug = (seed || '').replace(/[^a-z0-9]/gi, '').slice(0, 6).toLowerCase();
   return `store_${slug || 'biz'}${Math.random().toString(36).slice(2, 5)}`;
@@ -3737,12 +4104,12 @@ function MembersSection() {
         <Empty text="회원이 없어요." />
       ) : (
         <View style={styles.table}>
-          {shown.map((m) => {
+          {shown.map((m, ri) => {
             const corpRow = memberTypeOf(m) === '기업';
             return (
               <TouchableOpacity
                 key={m.id}
-                style={styles.memberRow}
+                style={[styles.memberRow, ri === shown.length - 1 && styles.rowLast]}
                 activeOpacity={0.7}
                 onPress={() => setDetail(m)}
               >
@@ -3758,7 +4125,7 @@ function MembersSection() {
                   <Text style={styles.memberSub} numberOfLines={1}>
                     {corpRow
                       ? `${m.managerName || '담당자 미정'} · ${m.linkedStoreName || '매장 미연결'}${m.loginId ? ` · @${m.loginId}` : ''}`
-                      : `${m.handle || ''} · ${Number(m.pb) || 0}PB${m.referralCode ? ` · 코드 ${m.referralCode}` : ''} · 초대 ${Number(m.referralCount) || 0}명`}
+                      : `${joinPathOf(m)} · ${m.handle || ''} · ${Number(m.pb) || 0}PB${m.referralCode ? ` · 코드 ${m.referralCode}` : ''} · 초대 ${Number(m.referralCount) || 0}명`}
                   </Text>
                 </View>
                 <Badge value={m.status || 'active'} />
@@ -3973,6 +4340,8 @@ function MemberDetail({
               ) : (
                 <>
                   <DetailRow icon="at-outline" label="아이디" value={m.handle || '-'} />
+                  <DetailRow icon="log-in-outline" label="가입경로" value={joinPathOf(m)} />
+                  <DetailRow icon="mail-outline" label="이메일" value={m.email || '-'} />
                   <DetailRow icon="gift-outline" label="초대코드" value={m.referralCode || m.handle || '-'} />
                   <DetailRow icon="calendar-outline" label="가입일" value={m.joinedAt || '-'} last />
                 </>
@@ -4361,12 +4730,12 @@ function StaffSection() {
         <Empty text="등록된 직원이 없어요." />
       ) : (
         <View style={styles.table}>
-          {list.map((m) => {
+          {list.map((m, ri) => {
             const mt = metrics(m.name);
             return (
               <TouchableOpacity
                 key={m.id}
-                style={styles.memberRow}
+                style={[styles.memberRow, ri === list.length - 1 && styles.rowLast]}
                 activeOpacity={0.7}
                 onPress={() => setDetail(m)}
               >
@@ -4881,6 +5250,22 @@ function PbLedgerView() {
 
 /* ==================================================== generic collection */
 
+/* 표의 열 폭·정렬 규칙.
+   전부 같은 폭(flex 1.5)을 주면 이름 열은 잘리고 상태·숫자 열은 공간이 남아
+   표 전체가 어긋나 보인다. 열의 성격에 따라 폭과 정렬을 다르게 준다. */
+const NUMERIC_COLS = new Set([
+  'pb', 'price', 'pbCost', 'stock', 'winners', 'stores', 'feePerStore', 'reqPb', 'pbClaw', 'amount',
+]);
+const FIXED_COLS: Record<string, number> = { image: 56, status: 96 };
+const WIDE_COLS = new Set(['name', 'title', 'target', 'product', 'storeName', 'address']);
+
+function colStyle(key: string): any {
+  if (FIXED_COLS[key]) return { width: FIXED_COLS[key] };
+  if (NUMERIC_COLS.has(key)) return { flex: 1 };
+  if (WIDE_COLS.has(key)) return { flex: 2.2 };
+  return { flex: 1.4 };
+}
+
 function CollectionManager({
   collection,
   title,
@@ -5004,17 +5389,21 @@ function CollectionManager({
         <View style={styles.table}>
           <View style={[styles.tr, styles.trHead]}>
             {columns.map((c) => (
-              <Text key={c} style={[styles.th, { flex: 1.5 }]}>
+              <Text
+                key={c}
+                style={[styles.th, colStyle(c), NUMERIC_COLS.has(c) && styles.tNum]}
+                numberOfLines={1}
+              >
                 {labelOf[c] || c}
               </Text>
             ))}
             <Text style={[styles.th, { width: extraAction ? 116 : 84, textAlign: 'right' }]}>관리</Text>
           </View>
-          {paged.map((it) => (
-            <View key={it.id} style={styles.tr}>
+          {paged.map((it, ri) => (
+            <View key={it.id} style={[styles.tr, ri === paged.length - 1 && styles.rowLast]}>
               {columns.map((c, i) =>
                 c === 'image' ? (
-                  <View key={c} style={{ flex: 1.5 }}>
+                  <View key={c} style={colStyle(c)}>
                     {it[c] ? (
                       <Image source={{ uri: it[c] }} style={styles.thumb} resizeMode="cover" />
                     ) : (
@@ -5024,13 +5413,18 @@ function CollectionManager({
                     )}
                   </View>
                 ) : c === 'status' ? (
-                  <View key={c} style={{ flex: 1.5 }}>
+                  <View key={c} style={colStyle(c)}>
                     <Badge value={String(it[c] ?? '')} />
                   </View>
                 ) : (
                   <Text
                     key={c}
-                    style={[styles.td, i === 0 && styles.tdStrong, { flex: 1.5 }]}
+                    style={[
+                      styles.td,
+                      i === 0 && styles.tdStrong,
+                      colStyle(c),
+                      NUMERIC_COLS.has(c) && styles.tNum,
+                    ]}
                     numberOfLines={1}
                   >
                     {fmtCell(c, it[c])}
@@ -5082,7 +5476,7 @@ function StatusText({ value }: { value: string }) {
       style={{
         color: good ? colors.primary : warn ? colors.coral : colors.textSecondary,
         fontWeight: '800',
-        fontSize: 12.5,
+        fontSize: 12,
       }}
     >
       {value || '-'}
@@ -5173,7 +5567,8 @@ function Modal({
               <Ionicons name="close" size={22} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
-          <ScrollView style={{ maxHeight: (wide ? '82vh' : 460) as any }} showsVerticalScrollIndicator={false}>
+          {/* 고정 460px 은 화면이 크면 답답하고 작으면 넘친다. 뷰포트 비율로 맞춘다. */}
+          <ScrollView style={{ maxHeight: (wide ? '82vh' : '72vh') as any }} showsVerticalScrollIndicator={false}>
             {children}
           </ScrollView>
         </View>
@@ -5310,6 +5705,9 @@ function SelectRow({
 function Empty({ text }: { text: string }) {
   return (
     <View style={styles.empty}>
+      <View style={styles.emptyIcon}>
+        <Ionicons name="file-tray-outline" size={22} color={colors.textTertiary} />
+      </View>
       <Text style={styles.emptyText}>{text}</Text>
     </View>
   );
@@ -5400,15 +5798,23 @@ const styles = StyleSheet.create({
 
   mainCol: { flex: 1 },
   topbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     height: 60,
-    paddingHorizontal: spacing['2xl'],
+    justifyContent: 'center',
     backgroundColor: colors.bg,
     borderBottomWidth: 1,
     borderBottomColor: colors.line,
   },
+  // 본문(contentInner)과 동일한 maxWidth·paddingHorizontal — 좌측 기준선을 공유한다.
+  topbarInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    maxWidth: CONTENT_MAX,
+    alignSelf: 'center',
+    paddingHorizontal: spacing['2xl'],
+  },
+  topbarInnerMobile: { paddingHorizontal: spacing.md },
   topbarTitle: { ...type.title, color: colors.textPrimary },
   topbarLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1, minWidth: 0 as any },
   hamburger: {
@@ -5444,7 +5850,7 @@ const styles = StyleSheet.create({
   adminChipText: { ...type.label, color: colors.textSecondary },
 
   contentPane: { flex: 1 },
-  contentInner: { padding: spacing['2xl'], maxWidth: 1100, width: '100%', alignSelf: 'center' },
+  contentInner: { padding: spacing['2xl'], maxWidth: CONTENT_MAX, width: '100%', alignSelf: 'center' },
 
   kpiIcon: {
     width: 34,
@@ -5456,7 +5862,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
 
-  dashRow: { flexDirection: 'row', gap: spacing.lg, flexWrap: 'wrap', marginBottom: spacing.md },
+  dashRow: { flexDirection: 'row', gap: spacing.lg, flexWrap: 'wrap', marginBottom: spacing.lg },
   dashCardLg: {
     flexGrow: 1,
     flexBasis: 420,
@@ -5493,7 +5899,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     padding: spacing.lg,
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
     ...shadow.soft,
   },
   linkText: { ...type.label, color: colors.primary },
@@ -5502,9 +5908,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    rowGap: spacing.lg,
     marginTop: spacing.md,
   },
-  flyNode: { flex: 1, alignItems: 'center', gap: 4 },
+  // 좁은 화면에서 5개 노드가 짓눌려 글자가 잘리지 않도록 최소 폭을 준다.
+  flyNode: { flexGrow: 1, flexBasis: 74, minWidth: 74, alignItems: 'center', gap: 4 },
   flyIcon: {
     width: 40,
     height: 40,
@@ -5526,6 +5935,19 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   gaugeFill: { height: '100%', backgroundColor: colors.primary, borderRadius: radius.pill },
+  gaugeLegend: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  gaugeLegendLabel: { ...type.caption, color: colors.textTertiary },
+  gaugeLegendVal: { fontSize: 13, fontWeight: '800', color: colors.textPrimary },
+  // 구분선이 있는 마지막 행과 카드 하단 링크가 붙지 않도록 띄운다.
+  cardLink: { marginTop: spacing.md, alignSelf: 'flex-start' },
   pbRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -5594,7 +6016,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
-  addBtnText: { color: colors.white, fontWeight: '800', fontSize: 13.5 },
+  addBtnText: { color: colors.white, fontWeight: '800', fontSize: 13 },
   addBtnGhost: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -5605,7 +6027,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     marginRight: spacing.sm,
   },
-  addBtnGhostText: { color: colors.primary, fontWeight: '800', fontSize: 13.5 },
+  addBtnGhostText: { color: colors.primary, fontWeight: '800', fontSize: 13 },
   csvArea: {
     minHeight: 140,
     backgroundColor: colors.surface,
@@ -5613,7 +6035,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.line,
     padding: spacing.md,
-    fontSize: 13.5,
+    fontSize: 13,
     color: colors.textPrimary,
     marginVertical: spacing.md,
     ...(typeof (globalThis as any).document !== 'undefined' ? { fontFamily: 'monospace' as any } : {}),
@@ -5631,10 +6053,12 @@ const styles = StyleSheet.create({
   },
   refreshText: { color: colors.primary, fontWeight: '800', fontSize: 13 },
 
-  kpiRow: { flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap', marginBottom: spacing.md },
+  kpiRow: { flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap', marginBottom: spacing.lg },
   kpiCard: {
     flexGrow: 1,
-    flexBasis: 150,
+    flexBasis: 170,
+    // 상한이 없으면 줄바꿈된 마지막 카드 하나가 가로 전체로 늘어나 열이 깨진다.
+    maxWidth: 320,
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     padding: spacing.lg,
@@ -5678,11 +6102,18 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   trHead: { backgroundColor: colors.surface },
+  // 카드 안 마지막 행의 밑줄은 카드 테두리와 겹쳐 선이 하나 떠 보인다.
+  rowLast: { borderBottomWidth: 0 },
   th: { ...type.caption, color: colors.textSecondary },
-  td: { fontSize: 13.5, color: colors.textSecondary, fontWeight: '600' },
+  td: { fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
   tdStrong: { color: colors.textPrimary, fontWeight: '800' },
+  // 숫자는 오른쪽 정렬 + 고정폭 숫자여야 자릿수가 세로로 맞는다.
+  tNum: {
+    textAlign: 'right',
+    ...({ fontVariantNumeric: 'tabular-nums' } as object),
+  },
   reconBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
-  reconText: { fontSize: 12.5, fontWeight: '800' },
+  reconText: { fontSize: 12, fontWeight: '800' },
   toastWrap: {
     position: 'absolute',
     bottom: spacing.xl,
@@ -5701,7 +6132,7 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   toastErr: { backgroundColor: colors.coral },
-  toastText: { color: '#fff', fontWeight: '700', fontSize: 13.5 },
+  toastText: { color: '#fff', fontWeight: '700', fontSize: 13 },
   auditRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 6 },
   auditDot: { width: 7, height: 7, borderRadius: 4 },
   auditText: { flex: 1, fontSize: 13, color: colors.textSecondary },
@@ -5733,7 +6164,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.lg,
   },
-  naverTitle: { fontSize: 14.5, fontWeight: '900', color: '#12833A', marginBottom: 2 },
+  naverTitle: { fontSize: 15, fontWeight: '900', color: '#12833A', marginBottom: 2 },
   naverBtn: {
     backgroundColor: '#03C75A',
     borderRadius: radius.sm,
@@ -5741,7 +6172,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  naverBtnText: { color: '#fff', fontWeight: '800', fontSize: 13.5 },
+  naverBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
   photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: 6 },
   naverThumb: { width: 92, height: 92, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt },
   naverThumbOn: { borderWidth: 3, borderColor: '#03C75A' },
@@ -5798,7 +6229,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
-  prodPillText: { fontSize: 11.5, fontWeight: '800', color: colors.primary },
+  prodPillText: { fontSize: 12, fontWeight: '800', color: colors.primary },
   prodImgBox: {
     height: 160,
     borderRadius: radius.lg,
@@ -5834,7 +6265,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     marginTop: -4,
   },
-  cutHintText: { fontSize: 12.5, fontWeight: '700', color: colors.coral, flex: 1 },
+  cutHintText: { fontSize: 12, fontWeight: '700', color: colors.coral, flex: 1 },
   photoHeadRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -5885,8 +6316,8 @@ const styles = StyleSheet.create({
   mTagCorp: { backgroundColor: colors.primarySoft },
   mTagUser: { backgroundColor: colors.surfaceAlt },
   mTagText: { fontSize: 11, fontWeight: '800' },
-  memberName: { fontSize: 14.5, fontWeight: '800', color: colors.textPrimary },
-  memberSub: { fontSize: 12.5, color: colors.textTertiary, fontWeight: '600', marginTop: 1 },
+  memberName: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+  memberSub: { fontSize: 12, color: colors.textTertiary, fontWeight: '600', marginTop: 1 },
   memberActs: { flexDirection: 'row', gap: spacing.md, alignItems: 'center' },
   genBtn: {
     backgroundColor: colors.primary,
@@ -5964,8 +6395,10 @@ const styles = StyleSheet.create({
   posPillText: { fontSize: 12, fontWeight: '800', color: colors.primary },
   staffStatGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
   staffStat: {
-    width: '47%',
+    // width + flexGrow 를 같이 주면 칸이 들쭉날쭉해진다. flexBasis 로 통일.
+    flexBasis: '47%',
     flexGrow: 1,
+    minWidth: 130,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     paddingVertical: spacing.md,
@@ -5976,7 +6409,7 @@ const styles = StyleSheet.create({
   sLabel: { fontSize: 13, fontWeight: '800', color: colors.textSecondary, marginTop: spacing.lg, marginBottom: spacing.sm },
   detailRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.md },
   detailLabel: { fontSize: 13, color: colors.textTertiary, fontWeight: '700', width: 64 },
-  detailValue: { flex: 1, textAlign: 'right', fontSize: 13.5, fontWeight: '700', color: colors.textPrimary },
+  detailValue: { flex: 1, textAlign: 'right', fontSize: 13, fontWeight: '700', color: colors.textPrimary },
   storeLine: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.md, paddingVertical: spacing.md },
   storeLineBorder: { borderBottomWidth: 1, borderBottomColor: colors.line },
   ckHead: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md },
@@ -5999,11 +6432,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   ckStatV: { fontSize: 15, fontWeight: '900', color: colors.textPrimary },
-  ckStatL: { fontSize: 11.5, color: colors.textTertiary, marginTop: 2 },
+  ckStatL: { fontSize: 12, color: colors.textTertiary, marginTop: 2 },
   ckDday: { fontSize: 13, fontWeight: '900', color: colors.primary },
   ckNext: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   ckInfoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 5 },
-  ckInfoText: { flex: 1, fontSize: 13.5, color: colors.textSecondary, fontWeight: '600' },
+  ckInfoText: { flex: 1, fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
   ckActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
   ckAct: {
     flex: 1,
@@ -6015,7 +6448,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingVertical: spacing.md,
   },
-  ckActText: { fontSize: 12.5, fontWeight: '800', color: colors.primary },
+  ckActText: { fontSize: 12, fontWeight: '800', color: colors.primary },
   ckDelete: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -6055,7 +6488,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   segBtnOn: { backgroundColor: colors.primary },
-  segText: { fontSize: 13.5, fontWeight: '700', color: colors.textSecondary },
+  segText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
   segTextOn: { color: colors.white },
   statusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.lg },
   statusChip: {
@@ -6084,7 +6517,7 @@ const styles = StyleSheet.create({
   funTrack: { flex: 1, height: 22, backgroundColor: colors.surfaceAlt, borderRadius: radius.sm, overflow: 'hidden' },
   funFill: { height: '100%', borderRadius: radius.sm, minWidth: 2 },
   funCount: { width: 44, textAlign: 'right', fontSize: 13, fontWeight: '800', color: colors.textPrimary },
-  funConv: { width: 44, textAlign: 'right', fontSize: 12.5, fontWeight: '700', color: colors.textTertiary },
+  funConv: { width: 44, textAlign: 'right', fontSize: 12, fontWeight: '700', color: colors.textTertiary },
 
   errBanner: {
     backgroundColor: colors.coralSoft,
@@ -6096,7 +6529,23 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     overflow: 'hidden',
   },
-  empty: { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.xl, alignItems: 'center', ...shadow.soft },
+  empty: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    paddingVertical: spacing['3xl'],
+    paddingHorizontal: spacing.xl,
+    alignItems: 'center',
+    gap: spacing.md,
+    ...shadow.soft,
+  },
+  emptyIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   emptyText: { ...type.body, color: colors.textTertiary, fontWeight: '600' },
 
   appCard: {
@@ -6112,7 +6561,7 @@ const styles = StyleSheet.create({
   appTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 4 },
   appName: { fontSize: 16, fontWeight: '800', color: colors.textPrimary },
   pill: {
-    fontSize: 11.5,
+    fontSize: 12,
     fontWeight: '800',
     color: colors.primary,
     backgroundColor: colors.primarySoft,
@@ -6189,7 +6638,7 @@ const styles = StyleSheet.create({
     borderColor: colors.line,
     backgroundColor: colors.surface,
     paddingHorizontal: spacing.md,
-    fontSize: 14.5,
+    fontSize: 15,
     color: colors.textPrimary,
     ...({ outlineStyle: 'none' } as object),
   },

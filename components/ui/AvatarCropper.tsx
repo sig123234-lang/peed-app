@@ -22,6 +22,7 @@ export function AvatarCropper({
   const TRACK = FRAME - 56;
 
   const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
+  const [loadErr, setLoadErr] = useState(false);
   const natRef = useRef<{ w: number; h: number } | null>(null);
   const elRef = useRef<any>(null);
   const t = useRef({ scale: 1, tx: 0, ty: 0 });
@@ -31,12 +32,22 @@ export function AvatarCropper({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const el = new (window as any).Image();
-    el.crossOrigin = 'anonymous';
+    // blob:/data: 는 같은 출처라 CORS 협상이 필요 없다. 오히려 crossOrigin 을 걸면
+    // 사파리에서 이미지 로드가 실패해(onload 가 안 뜸) 크롭 화면이 빈 채로 남는다.
+    // 원격 http(s) 이미지일 때만 익명 CORS 로 불러온다(캔버스 오염 방지).
+    if (/^https?:/i.test(uri)) el.crossOrigin = 'anonymous';
     el.onload = () => {
       const n = { w: el.naturalWidth || el.width, h: el.naturalHeight || el.height };
       elRef.current = el;
       natRef.current = n;
       setNat(n);
+      setLoadErr(false);
+    };
+    el.onerror = () => {
+      // 조용히 실패하면 사용자는 '왜 안 되지' 만 반복하게 된다.
+      elRef.current = null;
+      natRef.current = null;
+      setLoadErr(true);
     };
     el.src = uri;
   }, [uri]);
@@ -153,6 +164,11 @@ export function AvatarCropper({
                 }}
               />
             )}
+            {!n && loadErr ? (
+              <Text style={styles.loadErr}>
+                사진을 불러오지 못했어요.{'\n'}다른 사진으로 다시 시도해 주세요.
+              </Text>
+            ) : null}
             <View
               pointerEvents="none"
               style={[styles.ring, { width: FRAME, height: FRAME, borderRadius: FRAME / 2 }]}
@@ -173,7 +189,12 @@ export function AvatarCropper({
             <TouchableOpacity style={styles.cancel} onPress={onCancel} activeOpacity={0.85}>
               <Text style={styles.cancelText}>취소</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.done} onPress={done} activeOpacity={0.9}>
+            <TouchableOpacity
+              style={[styles.done, !n && { opacity: 0.5 }]}
+              onPress={done}
+              disabled={!n}
+              activeOpacity={0.9}
+            >
               <Text style={styles.doneText}>적용</Text>
             </TouchableOpacity>
           </View>
@@ -200,6 +221,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: { fontSize: 18, fontWeight: '900', color: colors.textPrimary },
+  loadErr: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textTertiary,
+    textAlign: 'center',
+    paddingHorizontal: spacing.lg,
+  },
   sub: {
     fontSize: 12.5,
     fontWeight: '600',

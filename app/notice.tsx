@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -16,37 +16,29 @@ type Notice = {
   pinned?: boolean;
 };
 
-const NOTICES: Notice[] = [
-  {
-    id: '3',
-    title: 'PB 대결 미니게임 오픈',
-    date: '2026.07.20',
-    tag: '업데이트',
-    content:
-      'PB를 걸고 겨루는 미니게임(가위바위보·스피드 퀴즈·라스트맨)이 열렸어요. 플레이 탭에서 랜덤 매칭으로 바로 즐겨보세요.',
-    pinned: true,
-  },
-  {
-    id: '2',
-    title: '버닝맵 개편 안내',
-    date: '2026.07.15',
-    tag: '업데이트',
-    content:
-      '지도에 매장 이름·리워드가 표시되고, 카테고리 필터와 "이 지역 검색"이 추가됐어요. 카카오맵·길찾기 연동도 지원해요.',
-  },
-  {
-    id: '1',
-    title: 'PEED 정식 오픈',
-    date: '2026.04.14',
-    tag: '공지',
-    content:
-      '버닝 매장 방문 후 리뷰를 남기고 PB를 받아보세요. 모은 PB로 경품에 응모하거나 미니게임에 참여할 수 있어요.',
-  },
-];
-
 export default function NoticeScreen() {
   const router = useRouter();
-  const [open, setOpen] = useState<string | null>(NOTICES.find((n) => n.pinned)?.id ?? null);
+  // 공지는 어드민(공지·알림)에서 작성한 것을 서버에서 받아온다.
+  const [notices, setNotices] = useState<Notice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/public?action=notices')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive) return;
+        const items: Notice[] = Array.isArray(d?.items) ? d.items : [];
+        setNotices(items);
+        setOpen(items.find((n) => n.pinned)?.id ?? items[0]?.id ?? null);
+      })
+      .catch(() => {})
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -61,7 +53,12 @@ export default function NoticeScreen() {
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.center}>
-          {NOTICES.map((n) => {
+          {loading ? (
+            <Text style={styles.emptyText}>불러오는 중…</Text>
+          ) : notices.length === 0 ? (
+            <Text style={styles.emptyText}>등록된 공지가 없어요.</Text>
+          ) : null}
+          {notices.map((n) => {
             const isOpen = open === n.id;
             return (
               <TouchableOpacity
@@ -113,6 +110,13 @@ const styles = StyleSheet.create({
   },
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 17, fontWeight: '800', color: colors.textPrimary },
+  emptyText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textTertiary,
+    textAlign: 'center',
+    paddingVertical: spacing['3xl'],
+  },
   content: { alignItems: 'center', paddingTop: spacing.lg },
   center: { width: APP_WIDTH, paddingHorizontal: spacing.lg, gap: spacing.md },
   card: {

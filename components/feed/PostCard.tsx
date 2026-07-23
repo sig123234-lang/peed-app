@@ -87,6 +87,74 @@ function ReceiptRow({
   );
 }
 
+/* 신고 시트 — 사유를 고르면 어드민 '모더레이션' 목록으로 바로 들어간다.
+   같은 글을 여러 번 신고해도 서버에서 한 번만 접수된다. */
+const REPORT_REASONS = ['허위 리뷰', '중복 리뷰', '부적절', '스팸', '기타'];
+
+function ReportSheet({
+  visible,
+  onClose,
+  postId,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  postId: string;
+}) {
+  const [sending, setSending] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const send = async (reason: string) => {
+    if (sending) return;
+    setSending(true);
+    try {
+      await fetch('/api/public?action=report', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId, reason }),
+      });
+      setDone(true);
+      setTimeout(() => {
+        setDone(false);
+        onClose();
+      }, 1200);
+    } catch {
+      onClose();
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity style={styles.reportBackdrop} activeOpacity={1} onPress={onClose}>
+        <View style={styles.reportSheet} onStartShouldSetResponder={() => true}>
+          {done ? (
+            <Text style={styles.reportDone}>신고가 접수되었어요. 확인 후 조치할게요.</Text>
+          ) : (
+            <>
+              <Text style={styles.reportTitle}>이 게시물을 신고할까요?</Text>
+              {REPORT_REASONS.map((r) => (
+                <TouchableOpacity
+                  key={r}
+                  style={styles.reportRow}
+                  onPress={() => send(r)}
+                  disabled={sending}
+                >
+                  <Text style={styles.reportRowText}>{r}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={styles.reportCancel} onPress={onClose}>
+                <Text style={styles.reportCancelText}>취소</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
 export function PostCard({ post }: { post: Post }) {
   const { toggleSave, toggleFollow, addComment } = useFeed();
   const { viewUser } = useShell();
@@ -94,6 +162,7 @@ export function PostCard({ post }: { post: Post }) {
   const showFollow = !author.isMe;
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [draft, setDraft] = useState('');
+  const [reportOpen, setReportOpen] = useState(false);
 
   const submitComment = () => {
     const t = draft.trim();
@@ -162,7 +231,23 @@ export function PostCard({ post }: { post: Post }) {
             </Text>
           </TouchableOpacity>
         )}
+        {!author.isMe && (
+          <TouchableOpacity
+            onPress={() => setReportOpen(true)}
+            style={styles.reportBtn}
+            hitSlop={8}
+            accessibilityLabel="이 게시물 신고"
+          >
+            <Ionicons name="ellipsis-horizontal" size={16} color={colors.textTertiary} />
+          </TouchableOpacity>
+        )}
       </View>
+
+      <ReportSheet
+        visible={reportOpen}
+        onClose={() => setReportOpen(false)}
+        postId={post.id}
+      />
 
       {/* the dish */}
       <Image source={post.image} style={styles.photo} contentFit="cover" />
@@ -427,6 +512,51 @@ const styles = StyleSheet.create({
   },
   followingText: {
     color: colors.textSecondary,
+  },
+
+  /* 신고 */
+  reportBtn: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: spacing.xs,
+  },
+  reportBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(10,12,20,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  reportSheet: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    ...shadow.card,
+  },
+  reportTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginBottom: spacing.sm,
+  },
+  reportRow: {
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  reportRowText: { fontSize: 14, fontWeight: '700', color: colors.textSecondary },
+  reportCancel: { paddingTop: spacing.md, alignItems: 'center' },
+  reportCancelText: { fontSize: 14, fontWeight: '800', color: colors.textTertiary },
+  reportDone: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    textAlign: 'center',
+    paddingVertical: spacing.lg,
   },
 
   /* photo */

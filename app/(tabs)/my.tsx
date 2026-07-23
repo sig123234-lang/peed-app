@@ -110,10 +110,6 @@ type WinItem = {
 
 // 실 사용 전환 — 내 게시물은 서버(myPosts)에서만 온다. 데모 리뷰 제거.
 
-// 응모/당첨 내역 — 실제 응모가 생기면 서버에서 채워질 자리(현재 비어있음).
-// 당첨 내역 — 추첨은 관리자가 진행. 소비자 당첨 데이터가 생기면 채워질 자리.
-const winItems: WinItem[] = [];
-
 const TABS: { key: TabType; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { key: 'reviews', label: '내 피드', icon: 'grid' },
   { key: 'reservations', label: '예약', icon: 'calendar-outline' },
@@ -169,6 +165,31 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
         // ignore
       }
     })();
+  }, []);
+
+  // 당첨 내역 = 어드민 추첨 결과 + 배송 상태(서버에서 합쳐서 내려준다).
+  const [winItems, setWinItems] = useState<WinItem[]>([]);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    let alive = true;
+    fetch('/api/public?action=myWins', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive || !Array.isArray(d?.items)) return;
+        setWinItems(
+          d.items.map((w: any) => ({
+            id: w.id,
+            title: w.title,
+            image: { uri: w.image || '' },
+            wonDate: w.wonDate || '-',
+            status: w.status || '수령전',
+          }))
+        );
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // 구(區) 도장 진행도 — 같은 구 5개마다 +1 PB.
@@ -288,22 +309,43 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
     setEditOpen(false);
 
     // 아바타 업로드(새 사진이면) → 서버 URL 확보.
+    // 웹 파일선택기는 data: 가 아니라 blob: URL 을 준다. 크롭이 실패하면 그 blob:
+    // 이 그대로 넘어오는데, 예전에는 data: 로 시작할 때만 업로드해서 blob: 이
+    // 서버에 저장되고 새로고침하면 사진이 사라졌다. 이제 blob: 도 변환해 올린다.
     let avatarUrl = draftAvatar || '';
-    if (Platform.OS === 'web' && draftAvatar && draftAvatar.startsWith('data:')) {
+    if (Platform.OS === 'web' && draftAvatar && !draftAvatar.startsWith('/api/')) {
       try {
-        const r = await fetch('/api/public?action=upload', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dataUrl: draftAvatar }),
-        });
-        const d = await r.json();
-        if (d?.url) avatarUrl = d.url;
+        let dataUrl = draftAvatar;
+        if (draftAvatar.startsWith('blob:')) {
+          const blob = await (await fetch(draftAvatar)).blob();
+          dataUrl = await new Promise<string>((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(String(fr.result || ''));
+            fr.onerror = () => reject(new Error('read_failed'));
+            fr.readAsDataURL(blob);
+          });
+        }
+        if (dataUrl.startsWith('data:')) {
+          const r = await fetch('/api/public?action=upload', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataUrl }),
+          });
+          const d = await r.json();
+          if (d?.url) avatarUrl = d.url;
+          else throw new Error('upload_failed');
+        }
       } catch {
-        // 업로드 실패 시 로컬 dataURL 유지
+        // 업로드 실패를 조용히 넘기면 사진이 안 바뀐 이유를 알 수 없다.
+        if (typeof window !== 'undefined' && window.alert) {
+          window.alert('프로필 사진 업로드에 실패했어요. 다시 시도해 주세요.');
+        }
+        avatarUrl = '';
       }
     }
-    setProfileAvatar(avatarUrl || null);
+    if (avatarUrl) setProfileAvatar(avatarUrl);
+    else if (!draftAvatar) setProfileAvatar(null);
 
     // 서버 계정에 프로필 저장 → 다른 사람이 내 글에서 보는 이름/사진도 갱신.
     if (Platform.OS === 'web') {

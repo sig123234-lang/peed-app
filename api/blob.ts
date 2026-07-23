@@ -1,38 +1,23 @@
-import { list } from '@vercel/blob';
+import { getBinary } from './_store';
 
-// Public image proxy — streams an image from the private Blob store so the admin
-// and the app can display it without exposing the store token. Only serves the
-// v2/img/ prefix.
+// 이미지 프록시 — 로컬 저장소(v2/img/)의 파일을 스트리밍한다.
+// 원래 Vercel Blob 비공개 스토어를 감추기 위한 프록시였고, 경로 규약(/api/blob?k=…)을
+// 그대로 유지해서 이미 저장된 URL들이 계속 동작하게 한다. v2/img/ 접두사만 허용.
 export default async function handler(req: any, res: any) {
   const k = String(req.query?.k || '');
   if (!k.startsWith('v2/img/')) {
     res.status(400).end();
     return;
   }
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  if (!token) {
-    res.status(500).end();
-    return;
-  }
   try {
-    const { blobs } = await list({ prefix: k, token, limit: 10 });
-    const blob = blobs.find((x) => x.pathname === k);
-    if (!blob) {
+    const f = await getBinary(k);
+    if (!f) {
       res.status(404).end();
       return;
     }
-    const r = await fetch(`${blob.url}?t=${Date.now()}`, {
-      cache: 'no-store',
-      headers: { authorization: `Bearer ${token}` },
-    });
-    if (!r.ok) {
-      res.status(502).end();
-      return;
-    }
-    const buf = Buffer.from(await r.arrayBuffer());
-    res.setHeader('Content-Type', r.headers.get('content-type') || 'image/jpeg');
+    res.setHeader('Content-Type', f.contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.status(200).send(buf);
+    res.status(200).send(f.buf);
   } catch {
     res.status(500).end();
   }

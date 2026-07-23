@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -182,6 +183,7 @@ function NavTab({
 }
 
 export default function HomeScreen() {
+  const router = useRouter();
   const {
     tab: activeTab,
     setTab: setActiveTab,
@@ -204,7 +206,6 @@ export default function HomeScreen() {
   // 제스처바를 피할 최소 여백은 확보하되 상한(28)을 둬서 너무 커지지 않게.
   const bottomInset = Math.min(Math.max(insets.bottom, isStandalone ? 14 : 0), 28);
   const [myInitialTab, setMyInitialTab] = useState<MyTabType>('reviews');
-  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
 
   const [noticeModalVisible, setNoticeModalVisible] = useState(false);
   const [selectedNotice, setSelectedNotice] = useState<{
@@ -270,78 +271,14 @@ export default function HomeScreen() {
     setMyInitialTab('reviews');
     setShowReview(false);
     closeStoreDetail();
-    setIsNotificationOpen(false);
   };
 
-  const toggleNotifications = () => {
-    setIsNotificationOpen((prev) => !prev);
-  };
 
-  const markAllNotificationsRead = () => {
-    setNotifications((prev) =>
-      prev.map((item) => ({
-        ...item,
-        unread: false,
-      }))
-    );
-    if (Platform.OS === 'web') {
-      fetch('/api/public?action=notifsRead', { method: 'POST', credentials: 'include' }).catch(
-        () => {}
-      );
-    }
-  };
 
   const removeNotification = (id: string) => {
     setNotifications((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const handleNotificationPress = (item: NotificationItem) => {
-    setNotifications((prev) =>
-      prev.map((n) =>
-        n.id === item.id
-          ? {
-              ...n,
-              unread: false,
-            }
-          : n
-      )
-    );
-
-    if (item.type === '공지' && item.noticeData) {
-      setSelectedNotice(item.noticeData);
-      setNoticeModalVisible(true);
-      setIsNotificationOpen(false);
-      removeNotification(item.id);
-      return;
-    }
-
-    if (item.type === '경품') {
-      setActiveTab('peed');
-      setIsNotificationOpen(false);
-      removeNotification(item.id);
-      return;
-    }
-
-    if (item.type === '당첨') {
-      setMyInitialTab('wins');
-      setActiveTab('my');
-      setIsNotificationOpen(false);
-      removeNotification(item.id);
-      return;
-    }
-
-    if (item.type === '버닝') {
-      setIsNotificationOpen(false);
-      removeNotification(item.id);
-      return;
-    }
-
-    if (item.type === 'PB') {
-      setIsNotificationOpen(false);
-      removeNotification(item.id);
-      return;
-    }
-  };
 
   const renderContent = () => {
     if (activeTab === 'burning') {
@@ -397,7 +334,7 @@ export default function HomeScreen() {
       <AppHeader
         pbAmount={headerPbAmount}
         onPressLogo={goHome}
-        onPressBell={toggleNotifications}
+        onPressBell={() => router.push('/notifications')}
         onPressDm={() => setActiveTab('dm')}
         unreadCount={unreadAlarmCount}
         dmUnread={dmUnread}
@@ -418,67 +355,6 @@ export default function HomeScreen() {
         {renderContent()}
       </View>
 
-      {isNotificationOpen ? (
-        <>
-          <Pressable
-            style={styles.notificationBackdrop}
-            onPress={() => setIsNotificationOpen(false)}
-          />
-
-          <View style={styles.notificationPopup}>
-            <View style={styles.notificationHeader}>
-              <Text style={styles.notificationTitle}>알림</Text>
-
-              <TouchableOpacity onPress={markAllNotificationsRead}>
-                <Text style={styles.notificationReadAll}>모두 확인</Text>
-              </TouchableOpacity>
-            </View>
-
-            {notifications.length === 0 ? (
-              <View style={styles.notificationEmptyWrap}>
-                <Text style={styles.notificationEmptyText}>
-                  새로운 알림이 없습니다.
-                </Text>
-              </View>
-            ) : (
-              <ScrollView
-                style={styles.notificationList}
-                contentContainerStyle={styles.notificationListContent}
-                showsVerticalScrollIndicator={false}
-              >
-                {notifications.map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[
-                      styles.notificationItem,
-                      item.unread && styles.notificationItemUnread,
-                    ]}
-                    activeOpacity={0.85}
-                    onPress={() => handleNotificationPress(item)}
-                  >
-                    <View style={styles.notificationItemTop}>
-                      <View style={styles.notificationTypeBadge}>
-                        <Text style={styles.notificationTypeBadgeText}>
-                          {item.type}
-                        </Text>
-                      </View>
-
-                      <Text style={styles.notificationTime}>{item.time}</Text>
-                    </View>
-
-                    <View style={styles.notificationTitleRow}>
-                      <Text style={styles.notificationItemTitle}>{item.title}</Text>
-                      {item.unread ? <View style={styles.notificationUnreadDot} /> : null}
-                    </View>
-
-                    <Text style={styles.notificationBody}>{item.body}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
-          </View>
-        </>
-      ) : null}
 
       <Modal
         visible={noticeModalVisible}
