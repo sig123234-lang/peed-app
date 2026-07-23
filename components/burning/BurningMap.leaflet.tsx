@@ -137,6 +137,19 @@ export function BurningMapLeaflet({
   const fittedRef = useRef(false); // 전체 보기 1회만
   const [ready, setReady] = useState(false);
 
+  // 이 줌보다 넓게 보고 있으면 핀 이름을 감추고 점만 남긴다. 말풍선은
+  // 줌아웃해도 크기가 그대로라 축소할수록 지도를 뒤덮는다.
+  const LABEL_MIN_ZOOM = 15;
+
+  const syncPinLabels = () => {
+    const map = mapRef.current;
+    if (!map || !containerRef.current) return;
+    const far = map.getZoom() < LABEL_MIN_ZOOM;
+    containerRef.current.querySelectorAll('.peed-pin').forEach((el) => {
+      el.classList.toggle('peed-pin--far', far);
+    });
+  };
+
   // ── 지도는 마운트 시 딱 한 번만 생성한다. 필터/데이터가 바뀌어도 재생성하지
   //    않아(타일 재로딩·지도 파괴 방지) 진입/조작 렉을 없앤다.
   useEffect(() => {
@@ -202,6 +215,8 @@ export function BurningMapLeaflet({
           });
         }
 
+        map.on('zoomend', syncPinLabels);
+
         requestAnimationFrame(() => {
           if (!cancelled && map) map.invalidateSize();
         });
@@ -263,21 +278,22 @@ export function BurningMapLeaflet({
       const m = L.marker([p.lat, p.lng], { icon, title: p.name, riseOnHover: true });
       // 카드 내용은 '열릴 때' 만든다 — 위치 권한이 늦게 떨어져도 거리가 나온다.
       m.bindPopup(() => cardHtml(p, hereRef.current), {
-        closeButton: true,
+        closeButton: false,
         autoPan: true,
-        offset: [0, -22],
+        offset: [0, -18],
       });
-      // 카드 안의 '상세보기' 를 눌렀을 때만 상세 화면으로 간다. 핀을 눌렀다고
-      // 바로 화면이 바뀌면 지도에서 여러 곳을 비교할 수가 없다.
+      // 카드를 누르면 상세로 간다. 핀을 눌렀다고 바로 화면이 바뀌면 지도에서
+      // 여러 곳을 비교할 수가 없어, 카드를 한 번 거치게 한다.
       m.on('popupopen', (e: any) => {
-        const btn = e.popup.getElement()?.querySelector('.peed-card-btn');
-        if (btn) btn.onclick = () => onPressRef.current?.(p);
+        const card = e.popup.getElement()?.querySelector('.peed-card');
+        if (card) card.onclick = () => onPressRef.current?.(p);
       });
       cluster.addLayer(m);
     });
 
     map.addLayer(cluster);
     layerRef.current = cluster;
+    syncPinLabels();
 
     // 핀이 여러 개면 전부 보이도록 화면을 맞춘다. 고정 줌이면 화면 밖에 있는
     // 매장은 있는 줄도 모른다.
@@ -343,8 +359,8 @@ export function BurningMapLeaflet({
     <div style={box}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* 몇 곳이 있는지 — 지도만 보고는 알 수 없던 정보 */}
-      {pts.length > 0 && <div className="peed-badge">🔥 버닝 매장 {pts.length}곳</div>}
+      {/* 매장 수 배지는 두지 않는다 — 지도 바로 아래 목록 제목이 이미
+          "가까운 버닝 매장 N곳" 을 말하고 있어 같은 말을 두 번 하는 셈이다. */}
 
       <button
         onClick={goHere}

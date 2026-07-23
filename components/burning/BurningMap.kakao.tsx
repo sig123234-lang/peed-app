@@ -149,6 +149,20 @@ export function BurningMapKakao({
     }
   };
 
+  // 이 레벨보다 넓게 보고 있으면 이름을 감추고 점만 남긴다. (카카오는 숫자가
+  // 클수록 넓은 범위)
+  const LABEL_MAX_LEVEL = 5;
+
+  const syncPinLabels = () => {
+    const map = mapRef.current;
+    if (!map) return;
+    const far = map.getLevel() > LABEL_MAX_LEVEL;
+    pinsRef.current.forEach((o) => {
+      const el = o.getContent();
+      if (el && el.classList) el.classList.toggle('peed-pin--far', far);
+    });
+  };
+
   // ── 지도는 마운트 시 한 번만 만든다.
   useEffect(() => {
     let cancelled = false;
@@ -171,13 +185,15 @@ export function BurningMapKakao({
         });
         mapRef.current = map;
 
-        // 줌 컨트롤 + 일반/스카이뷰 전환. 스카이뷰는 "여기가 어떤 골목인지"를
-        // 라벨보다 빠르게 알려줘 정보량 체감이 크다.
-        map.addControl(new maps.ZoomControl(), maps.ControlPosition.RIGHT);
-        map.addControl(new maps.MapTypeControl(), maps.ControlPosition.TOPRIGHT);
+        // 지도가 크지 않아 컨트롤은 얹지 않는다. 줌은 휠·핀치로, 지도 종류
+        // 전환은 쓸 일이 없다. 버튼이 늘수록 정작 봐야 할 핀이 가려진다.
 
         // 빈 곳을 누르면 열려 있던 카드를 닫는다.
         maps.event.addListener(map, 'click', closeCard);
+
+        // 넓게 보면 핀 이름을 감춘다. 말풍선은 줌아웃해도 크기가 그대로라
+        // 축소할수록 지도를 뒤덮는다.
+        maps.event.addListener(map, 'zoom_changed', syncPinLabels);
 
         if (!single && !hereRef.current && typeof navigator !== 'undefined' && navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(
@@ -287,14 +303,29 @@ export function BurningMapKakao({
       pinsRef.current.push(overlay);
     });
 
-    // 핀이 여러 개면 전부 보이도록 화면을 맞춘다. 고정 줌이면 화면 밖에 있는
-    // 매장은 있는 줄도 모른다.
-    if (cur.length > 1 && !fittedRef.current) {
+    syncPinLabels();
+
+    // 매장과 내 위치가 한 화면에 들어오게 맞춘다. 고정 줌으로 시작하면 화면
+    // 밖에 있는 매장은 있는 줄도 모르고, 반대로 너무 당겨져 있으면 어디를
+    // 보고 있는지 감이 안 온다.
+    if (cur.length > 0 && !fittedRef.current) {
       try {
         const b = new maps.LatLngBounds();
         cur.forEach((p) => b.extend(new maps.LatLng(p.lat, p.lng)));
-        map.setBounds(b, 48, 48, 48, 48);
+        if (hereRef.current) {
+          b.extend(new maps.LatLng(hereRef.current.lat, hereRef.current.lng));
+        }
+        if (cur.length === 1 && !hereRef.current) {
+          // 점 하나로 setBounds 하면 최대 배율까지 당겨진다.
+          map.setCenter(new maps.LatLng(cur[0].lat, cur[0].lng));
+          map.setLevel(6);
+        } else {
+          map.setBounds(b, 48, 48, 48, 48);
+          // 매장이 내 위치 바로 옆이면 setBounds 가 최대 배율까지 당겨버린다.
+          if (map.getLevel() < 4) map.setLevel(4);
+        }
         fittedRef.current = true;
+        syncPinLabels();
       } catch {
         // ignore
       }
@@ -311,16 +342,13 @@ export function BurningMapKakao({
 
     const el = document.createElement('div');
     el.className = 'peed-ov-wrap';
-    el.innerHTML =
-      '<div class="peed-ov">' +
-      '<button class="peed-ov-x" type="button" aria-label="닫기">✕</button>' +
-      cardHtml(p, hereRef.current) +
-      '</div>';
-    el.onclick = (ev) => ev.stopPropagation();
-    el.querySelector<HTMLButtonElement>('.peed-ov-x')!.onclick = closeCard;
-    // 카드 안의 '상세보기' 를 눌렀을 때만 상세 화면으로 간다. 핀을 눌렀다고
-    // 바로 화면이 바뀌면 지도에서 여러 곳을 비교할 수가 없다.
-    el.querySelector<HTMLButtonElement>('.peed-card-btn')!.onclick = () => onPressRef.current?.(p);
+    el.innerHTML = `<div class="peed-ov">${cardHtml(p, hereRef.current)}</div>`;
+    // 카드를 누르면 상세로 간다. 닫기 버튼은 두지 않는다 — 지도 아무 곳이나
+    // 누르면 닫히고, 작은 카드에 ✕ 까지 얹으면 그것대로 답답하다.
+    el.onclick = (ev) => {
+      ev.stopPropagation();
+      onPressRef.current?.(p);
+    };
 
     cardRef.current = new maps.CustomOverlay({
       position: new maps.LatLng(p.lat, p.lng),
@@ -370,24 +398,24 @@ export function BurningMapKakao({
     <div style={wrapStyle(height)}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* 몇 곳이 있는지 — 지도만 보고는 알 수 없던 정보 */}
-      {pts.length > 0 && <div className="peed-badge">🔥 버닝 매장 {pts.length}곳</div>}
+      {/* 매장 수 배지는 두지 않는다 — 지도 바로 아래 목록 제목이 이미
+          "가까운 버닝 매장 N곳" 을 말하고 있어 같은 말을 두 번 하는 셈이다. */}
 
       <button
         onClick={goHere}
         title="내 위치"
         style={{
           position: 'absolute',
-          right: 12,
-          bottom: 12,
+          right: 10,
+          bottom: 10,
           zIndex: 3,
-          width: 38,
-          height: 38,
+          width: 32,
+          height: 32,
           border: 'none',
-          borderRadius: 10,
-          background: '#fff',
+          borderRadius: 9,
+          background: 'rgba(255,255,255,.92)',
           color: '#4F6BFF',
-          fontSize: 17,
+          fontSize: 15,
           cursor: 'pointer',
           boxShadow: '0 2px 10px rgba(0,0,0,.18)',
         }}
