@@ -1,22 +1,14 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { MapMarker } from '@/data/stores';
 import { colors, radius } from '@/theme';
+
+import { BurningMapProps } from './mapShared';
 
 // Native placeholder. The interactive map (BurningMap.web.tsx) runs on web; a
 // real native map can be wired up in a native build later.
-export type MapBounds = { north: number; south: number; east: number; west: number };
+export type { MapBounds } from './mapShared';
 
-export function BurningMap({
-  markers,
-  height = 200,
-}: {
-  markers?: MapMarker[];
-  zoom?: number;
-  height?: number;
-  onMarkerPress?: (marker: MapMarker) => void;
-  onSearchArea?: (bounds: MapBounds) => void;
-}) {
+export function BurningMap({ markers, height = 200 }: BurningMapProps) {
   const label =
     markers && markers.length === 1
       ? markers[0].name

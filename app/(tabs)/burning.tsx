@@ -274,6 +274,7 @@ export default function BurningScreen({ onPressReview }: BurningScreenProps) {
           <BurningMap
             markers={markers}
             height={320}
+            here={userLoc}
             onMarkerPress={(mk) => {
               const store = allStores.find((s) => s.id === mk.id);
               if (store) openStoreDetail(store);
