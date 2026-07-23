@@ -117,10 +117,13 @@ const PIN_CSS =
   '.peed-pin-pill--sm{padding:1px 7px;font-size:10px;' +
   'transform:translate(-50%,calc(-100% - 10px))}' +
   '.peed-pin:hover{z-index:10000 !important}' +
+  // 점 크기는 줌에 따라 바뀐다 — 값은 지도 쪽에서 --dot/--dot-b 로 넣어준다.
+  // 넓게 볼수록 작아져야 여러 매장이 서로 뭉개지지 않는다.
   '.peed-pin-dot{position:absolute;left:0;top:0;' +
-  'transform:translate(-50%,-50%);width:14px;height:14px;' +
-  'border-radius:50%;background:#FF6B6B;border:2.5px solid #fff;' +
-  'box-shadow:0 1px 4px rgba(0,0,0,.35)}' +
+  'transform:translate(-50%,-50%);' +
+  'width:var(--dot,14px);height:var(--dot,14px);' +
+  'border-radius:50%;background:#FF6B6B;border:var(--dot-b,2.5px) solid #fff;' +
+  'box-shadow:0 1px 4px rgba(0,0,0,.35);transition:width .12s,height .12s}' +
   // 도(道) 단위까지 축소했을 때만 이름을 감춘다. 매장이 늘면 그 배율에서는
   // 이름이 서로 겹쳐 읽히지도 않는다. 평소 보는 배율에서는 늘 보인다.
   '.peed-pin--far .peed-pin-pill{display:none}' +

@@ -16,7 +16,7 @@ import {
 //
 // 키는 공개용 JavaScript 키다(도메인 제한이 걸린 클라이언트 키라 번들에 실려도
 // 안전하다). 도메인 화이트리스트는 브라우저 런타임에서 검사되므로, 등록이
-// 안 돼 있으면 여기서 실패하고 호출부가 Leaflet 폴백으로 내려간다.
+// 안 돼 있으면 여기서 실패하고 호출부가 안내 화면으로 내려간다.
 
 const SDK_ID = 'kakao-maps-sdk';
 const LOAD_TIMEOUT_MS = 6000;
@@ -149,18 +149,34 @@ export function BurningMapKakao({
     }
   };
 
-  // 이 레벨보다 넓게 보고 있을 때만 이름을 감춘다. 10 은 도(道)가 통째로
-  // 들어오는 배율이라, 실제로 매장을 고르는 배율에서는 이름이 늘 보인다.
-  // (카카오는 숫자가 클수록 넓은 범위)
-  const LABEL_MAX_LEVEL = 10;
+  // 카카오는 숫자가 클수록 넓은 범위다(3 ≈ 골목, 7 ≈ 1km, 10 ≈ 8km).
+  //
+  // 이름표는 7(약 1km)까지만 띄운다. 그보다 넓어지면 이름을 읽어도 어느
+  // 골목인지 알 수 없고, 상자만 지도를 덮는다.
+  const LABEL_MAX_LEVEL = 7;
 
-  const syncPinLabels = () => {
+  // 점도 배율에 맞춰 줄인다 — 넓게 볼수록 작아져야 매장이 여럿일 때 서로
+  // 뭉개지지 않고, 당겨보면 커져서 누르기 쉽다. [지름, 흰 테두리]
+  function dotSize(level: number): [number, number] {
+    if (level <= 3) return [18, 3];
+    if (level <= 5) return [15, 2.5];
+    if (level <= 7) return [12, 2];
+    if (level <= 9) return [10, 2];
+    return [8, 1.5];
+  }
+
+  const syncPins = () => {
     const map = mapRef.current;
     if (!map) return;
-    const far = map.getLevel() > LABEL_MAX_LEVEL;
+    const level = map.getLevel();
+    const far = level > LABEL_MAX_LEVEL;
+    const [d, b] = dotSize(level);
     pinsRef.current.forEach((o) => {
       const el = o.getContent();
-      if (el && el.classList) el.classList.toggle('peed-pin--far', far);
+      if (!el || !el.classList) return;
+      el.classList.toggle('peed-pin--far', far);
+      el.style.setProperty('--dot', `${d}px`);
+      el.style.setProperty('--dot-b', `${b}px`);
     });
   };
 
@@ -194,7 +210,7 @@ export function BurningMapKakao({
 
         // 넓게 보면 핀 이름을 감춘다. 말풍선은 줌아웃해도 크기가 그대로라
         // 축소할수록 지도를 뒤덮는다.
-        maps.event.addListener(map, 'zoom_changed', syncPinLabels);
+        maps.event.addListener(map, 'zoom_changed', syncPins);
 
         if (!single && !hereRef.current && typeof navigator !== 'undefined' && navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(
@@ -304,7 +320,7 @@ export function BurningMapKakao({
       pinsRef.current.push(overlay);
     });
 
-    syncPinLabels();
+    syncPins();
 
     // 매장과 내 위치가 한 화면에 들어오게 맞춘다. 고정 줌으로 시작하면 화면
     // 밖에 있는 매장은 있는 줄도 모르고, 반대로 너무 당겨져 있으면 어디를
@@ -326,7 +342,7 @@ export function BurningMapKakao({
           if (map.getLevel() < 4) map.setLevel(4);
         }
         fittedRef.current = true;
-        syncPinLabels();
+        syncPins();
       } catch {
         // ignore
       }
