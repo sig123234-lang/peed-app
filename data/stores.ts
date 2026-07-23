@@ -28,6 +28,11 @@ export type MapMarker = {
   lng: number;
   category?: string;
   reward?: number;
+  // 지도 위 말풍선에 바로 보여줄 정보. 핀만 찍혀 있으면 어디가 어떤 곳인지
+  // 알 수 없어 매번 상세 화면을 열었다 닫아야 했다.
+  image?: string;
+  location?: string;
+  rating?: number;
 };
 
 // Stable, module-level marker list — only PEED-registered stores show as pins.

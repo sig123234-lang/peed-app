@@ -104,7 +104,6 @@ export default function BurningScreen({ onPressReview }: BurningScreenProps) {
   const { openStoreDetail } = useShell();
   const [search, setSearch] = useState('');
   const [userLoc, setUserLoc] = useState<LatLng | null>(null);
-  const [cat, setCat] = useState('전체');
   const [areaBounds, setAreaBounds] = useState<{
     north: number;
     south: number;
@@ -204,22 +203,26 @@ export default function BurningScreen({ onPressReview }: BurningScreenProps) {
     return [...remote, ...STORES.filter((s) => !names.has(s.name))];
   }, [remote]);
 
-  // 카테고리 목록 — 등록 매장에서 자동 수집.
-  const categories = useMemo(() => {
-    const set = new Set<string>();
-    allStores.forEach((s) => s.category && set.add(s.category));
-    return ['전체', ...Array.from(set)];
-  }, [allStores]);
 
   const markers = useMemo(() => {
     const names = new Set(remote.map((s) => s.name));
     const remoteMarkers = remote
       .filter((s) => s.lat && s.lng)
-      .map((s) => ({ id: s.id, name: s.name, lat: s.lat, lng: s.lng, category: s.category, reward: s.reward }));
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        lat: s.lat,
+        lng: s.lng,
+        category: s.category,
+        reward: s.reward,
+        image: typeof s.image === 'object' && s.image?.uri ? String(s.image.uri) : '',
+        location: s.location,
+        rating: s.rating,
+      }));
     const staticMarkers = STORE_MARKERS.filter((m) => !names.has(m.name));
     const all = [...remoteMarkers, ...staticMarkers];
-    return cat === '전체' ? all : all.filter((m) => m.category === cat);
-  }, [remote, cat]);
+    return all;
+  }, [remote]);
 
   const inBounds = (s: ReservableStore) =>
     !areaBounds ||
@@ -230,7 +233,7 @@ export default function BurningScreen({ onPressReview }: BurningScreenProps) {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let base = allStores.filter((s) => (cat === '전체' ? true : s.category === cat) && inBounds(s));
+    let base = allStores.filter((s) => inBounds(s));
     if (q) {
       base = base.filter(
         (s) =>
@@ -243,7 +246,7 @@ export default function BurningScreen({ onPressReview }: BurningScreenProps) {
     // Nearest first.
     return [...base].sort((a, b) => distKm(userLoc, a) - distKm(userLoc, b));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, userLoc, allStores, cat, areaBounds]);
+  }, [search, userLoc, allStores, areaBounds]);
 
   return (
     <View style={styles.container}>
@@ -278,24 +281,6 @@ export default function BurningScreen({ onPressReview }: BurningScreenProps) {
             onSearchArea={(b) => setAreaBounds(b)}
           />
           <View style={{ height: spacing.md }} />
-
-          {/* 카테고리 필터 칩 */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipRow}
-          >
-            {categories.map((c) => (
-              <TouchableOpacity
-                key={c}
-                onPress={() => setCat(c)}
-                activeOpacity={0.85}
-                style={[styles.chip, cat === c && styles.chipOn]}
-              >
-                <Text style={[styles.chipText, cat === c && styles.chipTextOn]}>{c}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
 
           {/* search */}
           <View style={styles.searchBar}>
