@@ -51,14 +51,14 @@ function fmtDistance(km: number): string {
   return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(1)}km`;
 }
 
-/** 핀 말풍선(pill) 안쪽 HTML. 매장명 + 적립 PB. */
+/**
+ * 핀 = 점 + 그 위의 이름표. 이름만 넣는다. 🔥 와 적립 PB 도 달아봤지만,
+ * 핀이 옆으로 길어질수록 지도를 가린다. 적립 PB 는 핀을 눌렀을 때 뜨는
+ * 카드와 아래 목록에서 보여준다.
+ */
 export function pinHtml(p: MapMarker, small: boolean): string {
-  const pb =
-    typeof p.reward === 'number' && p.reward > 0
-      ? `<span class="peed-pin-pb">+${p.reward}</span>`
-      : '';
   return (
-    `<div class="peed-pin-pill${small ? ' peed-pin-pill--sm' : ''}">🔥 ${escapeHtml(p.name)}${pb}</div>` +
+    `<div class="peed-pin-pill${small ? ' peed-pin-pill--sm' : ''}">${escapeHtml(p.name)}</div>` +
     '<div class="peed-pin-dot"></div>'
   );
 }
@@ -106,15 +106,16 @@ const PIN_CSS =
   // 좌표 지점에 0×0 기준점을 만든다. (Leaflet 은 divIcon 이 이 역할을 하므로
   // .peed-pin 에 position 을 주면 오히려 마커 배치가 깨진다.)
   '.peed-pin-k{position:relative;width:0;height:0}' +
-  // 이름은 점 위에 그냥 글씨로 얹는다. 흰 테두리 말풍선으로 감싸면 상자가
-  // 지도를 가려서, 줌아웃할 때 화면을 뒤덮는 게 바로 그 상자였다. 대신
-  // 흰 외곽선(text-shadow)을 둘러 어떤 배경 위에서도 읽히게 한다.
+  // 이름표는 흰 바탕에 코랄 테두리를 두른다. 지도 배경이 복잡해도 우리 핀이
+  // 확실히 구분된다. 이름만 넣어 상자를 짧게 유지하는 게 전제 — 🔥 나 PB 를
+  // 붙이면 옆으로 길어져 그 상자가 지도를 가린다.
   '.peed-pin-pill{position:absolute;left:0;top:0;' +
-  'transform:translate(-50%,calc(-100% - 11px));' +
+  'transform:translate(-50%,calc(-100% - 12px));padding:2px 8px;' +
+  'background:#fff;border:1.4px solid #FF6B6B;border-radius:999px;' +
   'font-size:11px;font-weight:800;color:#1A1A2E;white-space:nowrap;' +
-  'text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 3px #fff,0 0 3px #fff}' +
-  '.peed-pin-pill--sm{font-size:10px;transform:translate(-50%,calc(-100% - 9px))}' +
-  '.peed-pin-pb{margin-left:3px;color:#FF5A5A;font-weight:900}' +
+  'box-shadow:0 1px 4px rgba(0,0,0,.16)}' +
+  '.peed-pin-pill--sm{padding:1px 7px;font-size:10px;' +
+  'transform:translate(-50%,calc(-100% - 10px))}' +
   '.peed-pin:hover{z-index:10000 !important}' +
   '.peed-pin-dot{position:absolute;left:0;top:0;' +
   'transform:translate(-50%,-50%);width:14px;height:14px;' +
