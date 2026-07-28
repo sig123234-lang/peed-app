@@ -160,10 +160,14 @@ const styles = StyleSheet.create({
   loadingDot: {
     color: '#FF6B6B',
   },
+  // 데스크탑 페이지 바닥색 — 사이드바·피드·오른쪽 레일이 모두 이 위에 얹힌다.
+  // 예전엔 '#F0F2F5'(차가운 회색)이라 크림빛 팔레트와 따로 놀았고, 화면마다
+  // 다른 바닥색(home '#F7F8FA', burning colors.surface)과 만나 세로 이음매가
+  // 보였다. 바닥은 colors.surface 하나로 통일하고 카드만 흰색으로 남긴다.
   webRoot: {
     flex: 1,
     alignItems: 'center',
-    backgroundColor: '#F0F2F5',
+    backgroundColor: colors.surface,
   },
   onboardStage: {
     flex: 1,

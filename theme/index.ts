@@ -17,6 +17,14 @@ export const APP_WIDTH = Math.min(
   APP_MAX_WIDTH
 );
 
+/**
+ * 데스크탑 3단 레이아웃의 양쪽 기둥 폭. 가운데 칼럼 폭과 본문 기준선을 계산할
+ * 때 필요해서(예: 메시지 패널을 피드와 같은 세로선에 맞추기) 토큰으로 뺐다.
+ * 각 컴포넌트가 따로 숫자를 들고 있으면 한쪽만 바뀌었을 때 기준선이 어긋난다.
+ */
+export const SIDEBAR_WIDTH = 236;
+export const RAIL_WIDTH = 320;
+
 /* ---------------------------------------------------------------- colors */
 
 export const colors = {

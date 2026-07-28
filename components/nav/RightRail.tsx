@@ -8,7 +8,7 @@ import { usePb } from '@/context/pb';
 import { useReservations } from '@/context/reservations';
 import { useShell } from '@/context/shell';
 import { STORES } from '@/data/stores';
-import { colors, radius, shadow, spacing } from '@/theme';
+import { colors, radius, RAIL_WIDTH, shadow, spacing } from '@/theme';
 
 const comma = (n: number) => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
@@ -195,7 +195,7 @@ export function RightRail() {
 
 const styles = StyleSheet.create({
   rail: {
-    width: 320,
+    width: RAIL_WIDTH,
     paddingVertical: spacing.xl,
     paddingRight: spacing.lg,
     gap: spacing.lg,

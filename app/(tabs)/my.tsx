@@ -1066,7 +1066,7 @@ function DRow({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: colors.surface,
   },
   content: {
     paddingTop: spacing.md,

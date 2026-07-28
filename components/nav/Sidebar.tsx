@@ -7,7 +7,7 @@ import { useDm } from '@/context/dm';
 import { useFeed } from '@/context/feed';
 import { usePb } from '@/context/pb';
 import { ShellTab, useShell } from '@/context/shell';
-import { colors, radius, spacing } from '@/theme';
+import { colors, radius, SIDEBAR_WIDTH, spacing } from '@/theme';
 
 const comma = (n: number) => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
@@ -124,13 +124,15 @@ export function Sidebar() {
 }
 
 const styles = StyleSheet.create({
+  // 바닥색을 따로 칠하지 않고 페이지(webRoot)를 그대로 비친다 — 예전엔
+  // colors.bg(크림)라 페이지 바닥과 미묘하게 달라 경계가 도드라졌다.
+  // 구분은 오른쪽 실선 하나로 충분하다.
   sidebar: {
-    width: 236,
+    width: SIDEBAR_WIDTH,
     paddingVertical: spacing['2xl'],
     paddingHorizontal: spacing.lg,
     borderRightWidth: 1,
     borderRightColor: colors.line,
-    backgroundColor: colors.bg,
   },
   logo: {
     fontSize: 26,

@@ -17,7 +17,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { type Post, useFeed } from '@/context/feed';
 import { useShell } from '@/context/shell';
-import { colors, radius, shadow, spacing } from '@/theme';
+import { useIsDesktop } from '@/hooks/use-is-desktop';
+import { APP_MAX_WIDTH, colors, radius, shadow, spacing } from '@/theme';
 
 /* 게시물 댓글 시트 — 리치 UI + @멘션(태그).
    - 댓글마다 이니셜 아바타(이름 해시 색) · 상대시간 · 작성자 탭 → 프로필.
@@ -116,6 +117,7 @@ export function CommentsSheet({
   const { addComment, editComment, deleteComment, me } = useFeed();
   const { viewUser } = useShell();
   const insets = useSafeAreaInsets();
+  const isDesktop = useIsDesktop();
   const [draft, setDraft] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
@@ -242,11 +244,17 @@ export function CommentsSheet({
 
   const sheetCard = (
           <TouchableOpacity
-            style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) }]}
+            style={[
+              styles.sheet,
+              isDesktop && styles.sheetDesktop,
+              { paddingBottom: Math.max(insets.bottom, 12) },
+            ]}
             activeOpacity={1}
             onPress={() => {}}
           >
-            <View style={styles.handle} />
+            {/* 드래그 핸들은 바닥에서 끌어올리는 모바일 시트의 표식이다.
+                데스크탑에선 떠 있는 카드라 의미가 없어 감춘다. */}
+            {!isDesktop && <View style={styles.handle} />}
             <Text style={styles.title}>댓글 {count > 0 ? count : ''}</Text>
 
             <ScrollView
@@ -385,7 +393,9 @@ export function CommentsSheet({
     return createPortal(
       <div style={{ position: 'fixed', inset: 0, zIndex: 1000 }}>
         <TouchableOpacity style={styles.backdropFill} activeOpacity={1} onPress={onClose} />
-        <View style={styles.sheetAnchor}>{sheetCard}</View>
+        <View style={[styles.sheetAnchor, isDesktop && styles.sheetAnchorDesktop]}>
+          {sheetCard}
+        </View>
       </div>,
       document.body
     );
@@ -408,6 +418,8 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(10,12,20,0.45)', justifyContent: 'flex-end' },
   backdropFill: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,12,20,0.45)' },
   sheetAnchor: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  // 데스크탑에선 앵커가 화면 폭 전체라 시트도 좌우로 늘어졌다. 가운데로 모은다.
+  sheetAnchorDesktop: { alignItems: 'center' },
   kav: { width: '100%' },
   sheet: {
     backgroundColor: colors.card,
@@ -418,6 +430,15 @@ const styles = StyleSheet.create({
     // paddingBottom 은 세이프에어리어(제스처바) 만큼 인라인으로 준다.
     maxHeight: '88%',
     ...shadow.lifted,
+  },
+  // 데스크탑 — 바닥에 붙은 시트가 아니라 떠 있는 카드로. 폭은 피드와 같게 맞추고
+  // 네 모서리를 모두 둥글린다(바닥에 붙지 않으므로 아래 모서리도 각지면 어색하다).
+  sheetDesktop: {
+    width: '100%',
+    maxWidth: APP_MAX_WIDTH,
+    borderRadius: radius.xl,
+    marginBottom: spacing.lg,
+    maxHeight: '80%',
   },
   handle: {
     width: 40,

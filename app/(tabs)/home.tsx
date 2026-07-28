@@ -26,6 +26,7 @@ import { usePb } from '@/context/pb';
 import { useReservations } from '@/context/reservations';
 import { useShell } from '@/context/shell';
 import { useIsDesktop } from '@/hooks/use-is-desktop';
+import { colors } from '@/theme';
 import AppHeader from './AppHeader';
 import BurningScreen from './burning';
 import DmScreen from './dm';
@@ -494,9 +495,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
+  // 모든 탭 콘텐츠가 이 안에 들어간다 — 바닥색은 데스크탑 페이지(webRoot)와
+  // 같은 토큰이어야 오른쪽 레일과의 경계에 이음매가 안 생긴다.
   container: {
     flex: 1,
-    backgroundColor: '#F7F8FA',
+    backgroundColor: colors.surface,
   },
 
   scroll: {

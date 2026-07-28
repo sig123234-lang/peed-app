@@ -9,6 +9,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -18,7 +19,19 @@ import { initialAvatar, useFeed } from '@/context/feed';
 import { useShell } from '@/context/shell';
 import { useVoice } from '@/context/voice';
 import { useIsDesktop } from '@/hooks/use-is-desktop';
-import { colors, radius, shadow, spacing, type } from '@/theme';
+import {
+  APP_MAX_WIDTH,
+  colors,
+  radius,
+  RAIL_WIDTH,
+  shadow,
+  SIDEBAR_WIDTH,
+  spacing,
+  type,
+} from '@/theme';
+
+/** 데스크탑 대화 목록(왼쪽 칸) 폭 — 패널 전체 폭을 계산할 때도 쓴다. */
+const LIST_PANE_WIDTH = 320;
 
 function relTime(ts: number): string {
   const diff = Date.now() - ts;
@@ -77,6 +90,21 @@ export default function DmScreen() {
   const { dmTarget, clearDmTarget, setHideTabBar, viewUser, openOverlay, dropOverlay } = useShell();
   const { joinCall, activeConvId } = useVoice();
   const isDesktop = useIsDesktop();
+  const { width: winW } = useWindowDimensions();
+
+  // 데스크탑 패널을 게시글(피드)과 같은 세로 기준선에서 시작하게 맞춘다.
+  //
+  // 가운데 칼럼은 화면에서 사이드바·오른쪽 레일을 뺀 나머지고, 피드는 그 안에서
+  // APP_MAX_WIDTH 로 가운데 정렬된다(카드는 좌우 spacing.md 거터 안쪽). 메시지
+  // 패널은 피드보다 넓어서(목록 + 대화) 똑같이 가운데 정렬하면 왼쪽 기준선이
+  // 서로 어긋나 보인다 — 탭을 옮길 때 본문이 좌우로 튀는 원인이었다.
+  // 그래서 왼쪽 기준선을 피드에 고정하고, 남는 폭까지만 오른쪽으로 넓힌다.
+  const centerCol = Math.max(0, winW - SIDEBAR_WIDTH - RAIL_WIDTH);
+  const panelLeft = Math.max(0, (centerCol - APP_MAX_WIDTH) / 2) + spacing.md;
+  const desktopPanel = {
+    marginLeft: panelLeft,
+    width: Math.min(centerCol - panelLeft, LIST_PANE_WIDTH + APP_MAX_WIDTH),
+  };
 
   const CALL_MARK = '[VOICE_CALL]';
 
@@ -480,7 +508,7 @@ export default function DmScreen() {
   );
 
   const body = isDesktop ? (
-    <View style={styles.desktop}>
+    <View style={[styles.desktop, desktopPanel]}>
       <View style={styles.listPane}>
         {listHeader}
         {listEl}
@@ -610,9 +638,23 @@ function memberOf(c: DmConversation, uid: string): DmMember | undefined {
 }
 
 const styles = StyleSheet.create({
-  desktop: { flex: 1, flexDirection: 'row', backgroundColor: colors.bg },
+  // 데스크탑 — 예전엔 센터 컬럼을 통째로 채워서(1920 화면 기준 1300px+) 대화
+  // 영역이 지나치게 넓어지고 말풍선이 좌우로 늘어졌다. 목록 320 + 대화
+  // APP_MAX_WIDTH(홈 피드와 같은 폭)로 묶고 가운데 정렬해 하나의 패널로 보이게 한다.
+  // 바닥색을 colors.bg 로 남겨 페이지(colors.surface) 위에 얹힌 카드처럼 읽힌다.
+  desktop: {
+    flex: 1,
+    flexDirection: 'row',
+    // 폭·왼쪽 여백은 피드 기준선에 맞춰 컴포넌트에서 계산해 얹는다(desktopPanel).
+    alignSelf: 'flex-start',
+    backgroundColor: colors.bg,
+    borderLeftWidth: 1,
+    borderLeftColor: colors.line,
+    borderRightWidth: 1,
+    borderRightColor: colors.line,
+  },
   mobile: { flex: 1, backgroundColor: colors.bg },
-  listPane: { width: 320, borderRightWidth: 1, borderRightColor: colors.line },
+  listPane: { width: LIST_PANE_WIDTH, borderRightWidth: 1, borderRightColor: colors.line },
   threadPane: { flex: 1 },
   listHead: {
     flexDirection: 'row',

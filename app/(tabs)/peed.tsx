@@ -16,7 +16,7 @@ import {
 import { AppButton, GradientHeader, ProgressBar } from '@/components/ui/kit';
 import { usePb } from '@/context/pb';
 import { useIsDesktop } from '@/hooks/use-is-desktop';
-import { APP_WIDTH, colors, radius, shadow, spacing } from '@/theme';
+import { APP_MAX_WIDTH, APP_WIDTH, colors, radius, shadow, spacing } from '@/theme';
 
 const width = APP_WIDTH;
 
@@ -467,9 +467,11 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     paddingBottom: spacing['3xl'],
   },
+  // 홈 피드·버닝맵과 같은 폭으로 맞춘다 — 화면마다 본문 폭이 달라지면
+  // 탭을 옮길 때마다 콘텐츠 기준선이 흔들려 보인다.
   desktopWrap: {
     width: '100%',
-    maxWidth: 540,
+    maxWidth: APP_MAX_WIDTH,
   },
   grid: {
     marginTop: spacing.md,
