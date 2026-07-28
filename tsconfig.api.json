@@ -1,0 +1,33 @@
+{
+  // 서버(api/) 전용 타입체크 설정.
+  //
+  // tsconfig.json 은 Expo 앱 설정이라 exclude 에 "api" 가 들어 있다. 그래서
+  // `tsc --noEmit` 도 에디터도 서버 코드를 보지 않았고, 서버 빌드(esbuild)는
+  // 타입을 지우기만 해서 api/ 의 타입 오류는 어디에서도 걸러지지 않았다.
+  // 이 파일이 그 사각지대를 덮는다. `npm run typecheck` 가 둘 다 돌린다.
+  //
+  // expo/tsconfig.base 를 물려받지 않는다 — 그쪽은 react-native 조건부 해석과
+  // DOM lib 을 켜는 앱용 설정이고, 여기는 node20 위에서 도는 서버 코드다
+  // (server/build.mjs 의 esbuild 타깃과 맞춘다).
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  // server/routes.entry.ts 는 api/* 를 모아 묶는 진입점이라 함께 본다.
+  // api 가 참조하는 data/regions.ts 등은 상대 import 를 따라 자동으로 딸려온다.
+  "include": ["api/**/*.ts", "server/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

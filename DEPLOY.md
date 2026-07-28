@@ -75,12 +75,18 @@ sudo journalctl -u peed -f
 
 # 코드를 고친 뒤 반영
 cd /home/ubuntu/peed-app
+npm run typecheck      # 앱 + 서버(api/) 타입체크 — 빌드는 타입을 안 본다
 npm run build          # 웹 빌드 + API 번들 (5~10분)
 sudo systemctl restart peed
 
 # API 코드만 고쳤을 때 (30초)
 npm run build:api && sudo systemctl restart peed
 ```
+
+`npm run build` 는 esbuild·metro 로 타입을 지우기만 하므로 타입 오류가 있어도
+그냥 통과합니다. 특히 `api/` 는 앱 `tsconfig.json` 의 exclude 에 있어서
+`tsc --noEmit` 이나 에디터로도 안 잡히니, 배포 전에 `npm run typecheck` 를
+돌려주세요(`tsconfig.api.json` 이 서버 코드를 따로 봅니다).
 
 ---
 

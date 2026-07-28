@@ -9,6 +9,9 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
+    "typecheck": "npm run typecheck:app && npm run typecheck:api",
+    "typecheck:app": "tsc --noEmit",
+    "typecheck:api": "tsc --noEmit -p tsconfig.api.json",
     "build:web": "expo export --platform web && node scripts/inject-splash.js",
     "build:api": "node server/build.mjs",
     "build": "npm run build:web && npm run build:api",
@@ -50,6 +53,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@types/node": "^26.1.2",
     "@types/react": "~19.1.0",
     "@types/web-push": "^3.6.4",
     "esbuild": "^0.25.0",
