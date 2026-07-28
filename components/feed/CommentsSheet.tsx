@@ -307,6 +307,7 @@ export function CommentsSheet({
                               onChangeText={setEditText}
                               style={styles.editInput}
                               multiline
+                              {...({ rows: 1 } as any)}
                               autoFocus
                             />
                             <View style={styles.editBtns}>
@@ -381,6 +382,10 @@ export function CommentsSheet({
                 placeholderTextColor={colors.textTertiary}
                 style={styles.input}
                 multiline
+                // rows 를 안 주면 웹에서 <textarea> 기본값(2줄)로 그려져 입력칸이
+                // 두 줄 높이로 뚱뚱해진다. 한 줄로 시작하고 넘치면 안에서 스크롤.
+                // react-native-web 전용 prop 이라 RN 타입에는 없다.
+                {...({ rows: 1 } as any)}
                 onSubmitEditing={submit}
                 returnKeyType="send"
                 blurOnSubmit
@@ -556,20 +561,21 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    minHeight: 40,
+    minHeight: 38,
     maxHeight: 110,
     backgroundColor: colors.surfaceAlt,
     borderRadius: radius.lg,
     paddingHorizontal: spacing.md,
-    paddingVertical: 9,
+    paddingVertical: 8,
     fontSize: 14,
+    lineHeight: 20,
     color: colors.textPrimary,
     ...({ outlineStyle: 'none' } as object),
   },
   send: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
