@@ -11,6 +11,7 @@ import h8 from '../api/products';
 import h9 from '../api/public';
 import h10 from '../api/review';
 import h11 from '../api/stores';
+import h12 from '../api/verify';
 
 export const routes: Record<string, (req: any, res: any) => any> = {
   "/api/admin/data": h0,
@@ -25,6 +26,7 @@ export const routes: Record<string, (req: any, res: any) => any> = {
   "/api/public": h9,
   "/api/review": h10,
   "/api/stores": h11,
+  "/api/verify": h12,
 };
 
 // 스케줄러가 쓰는 작업 — 라우트가 아니라 서버가 주기적으로 직접 부른다.

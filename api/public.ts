@@ -1,19 +1,21 @@
-import { addBite, allBites } from './_bites';
-import * as districts from './_districts';
+import { addBite, allBites, removeBite, toggleLike as toggleBiteLike, updateBite } from './_bites';
 import * as entries from './_entries';
 import * as games from './_games';
+import { resolveStore } from './_match';
 import * as notifs from './_notifs';
 import * as push from './_push';
 import { recordPbEvent } from './_pb';
 import * as lk from './_livekit';
 import * as reservations from './_reservations';
-import * as stamps from './_stamps';
+import * as passport from './_passport';
 import * as sb from './_chat';
 import {
   addComment as addPostComment,
   allPosts,
   createPost,
+  editComment as editPostComment,
   incSaveCount,
+  removeComment as removePostComment,
   removePost,
   ServerPost,
   updatePost,
@@ -23,6 +25,7 @@ import { readUid, readUserCookie } from './_session';
 import * as social from './_social';
 import { getJSON, putJSON, saveDataUrl, storeConfigured } from './_store';
 import { getUserById, User } from './_users';
+import { findRegion } from '../data/regions';
 import * as wallet from './_wallet';
 
 // 공개 액션 라우터 — 여러 소비자 엔드포인트를 하나의 함수로 묶어 함수 수를 아낀다.
@@ -33,6 +36,11 @@ import * as wallet from './_wallet';
 //   POST /api/public?action=deletePost { id }
 //   POST /api/public?action=comment    { id, text }
 //   POST /api/public?action=upload     { dataUrl }      이미지 업로드 → URL
+//   GET  /api/public?action=bites                       스토리 목록(내 것 + 팔로우 + 공개)
+//   POST /api/public?action=createBite { image?, caption, overlays, filter, bg?, fit?, audience }
+//   POST /api/public?action=editBite   { id, ...위와 동일(보낸 항목만 반영) }
+//   POST /api/public?action=deleteBite { id }
+//   POST /api/public?action=biteReply  { biteId, text }   스토리 답장 → 작성자와의 1:1 채팅
 //   POST /api/public?action=apply   { storeName, region, contact, ... }  버닝 매장 신청(리드)
 //   POST /api/public?action=invite  { code, newHandle? }                 초대코드 → 초대자 PB 지급
 const norm = (s: any) => String(s || '').trim().replace(/^@/, '').toLowerCase();
@@ -287,7 +295,19 @@ function toClientPost(p: ServerPost, authorMap: Record<string, User>, savedSet?:
     price: p.price,
     saved: savedSet ? savedSet.has(p.id) : false,
     saveCount: p.saveCount || 0,
-    comments: p.comments || [],
+    // 댓글에 작성자의 현재 프로필 사진·핸들을 붙여 준다(클라이언트가 프사를 띄우게).
+    comments: (p.comments || []).map((c: any) => {
+      const cu = authorMap[c.userId];
+      return {
+        id: c.id,
+        userId: c.userId,
+        userName: c.userName,
+        text: c.text,
+        ts: c.ts,
+        avatar: cu?.avatar || '',
+        handle: cu?.handle || '',
+      };
+    }),
     timeLabel: relTime(p.createdAt),
     createdAt: p.createdAt,
     isBurning: p.isBurning,
@@ -297,10 +317,15 @@ function toClientPost(p: ServerPost, authorMap: Record<string, User>, savedSet?:
 }
 
 async function authorMapFor(posts: ServerPost[]): Promise<Record<string, User>> {
-  const ids = Array.from(new Set(posts.map((p) => p.authorId)));
+  // 게시물 작성자 + 댓글 작성자까지 모아 프로필(프사·핸들)을 붙일 수 있게 한다.
+  const ids = new Set<string>();
+  for (const p of posts) {
+    ids.add(p.authorId);
+    for (const c of p.comments || []) if (c.userId) ids.add(c.userId);
+  }
   const users = await getJSON<User[]>('v2/users.json', []);
   const map: Record<string, User> = {};
-  for (const u of users) if (ids.includes(u.id)) map[u.id] = u;
+  for (const u of users) if (ids.has(u.id)) map[u.id] = u;
   return map;
 }
 
@@ -336,7 +361,10 @@ async function handleFeed(uid: string, res: any) {
     uid ? saves.savedIds(uid) : Promise.resolve([] as string[]),
   ]);
   const savedSet = new Set(mySaves);
-  const pub = posts.filter((p) => !p.isPrivate);
+  // 홈 피드에는 '공개 + 이용 사진이 있는' 글만 올린다.
+  // 사진 없이 올린 공개 글은 홈에는 안 뜨지만 작성자 프로필에서는 누구나 볼 수 있다
+  // (비공개 글은 어느 쪽에서도 본인만 볼 수 있다 — handleUserPosts 참고).
+  const pub = posts.filter((p) => !p.isPrivate && !!p.image);
   const userMap: Record<string, User> = {};
   for (const u of users) userMap[u.id] = u;
 
@@ -820,20 +848,23 @@ async function handleCreatePost(uid: string, b: any, res: any) {
     return;
   }
   const images = await resolveImages(b.images || b.image);
-  // 표시용 적립 라벨(실제 PB 적립은 /api/review 가 매장당 1회로 처리 — 중복 방지).
+  // 버닝 여부는 서버가 매장명으로 판정한다 — 유저가 '일반 리뷰'로 올려도 등록된
+  // 버닝 매장이면 홈 피드에 버닝으로 뜬다. 클라이언트가 보낸 isBurning 은 믿지 않는다.
+  const resolved = await resolveStore(String(b.store || ''));
+  // 표시용 적립 라벨. 실제 PB 적립은 /api/review 한 곳에서만 일어난다.
   const post = await createPost(uid, {
     kind: b.kind,
-    store: b.store,
-    category: b.category,
-    location: b.location,
+    store: resolved.storeName,
+    category: b.category || resolved.category,
+    location: b.location || resolved.region,
     images,
     rating: b.rating,
     caption: b.caption,
     tags: b.tags,
     people: b.people,
     price: b.price,
-    isBurning: b.isBurning,
-    earnedPb: b.isBurning ? 10 : 2,
+    isBurning: resolved.burning,
+    earnedPb: resolved.reward,
     isPrivate: b.isPrivate,
   });
   const author = await getUserById(uid);
@@ -970,6 +1001,29 @@ async function handleComment(uid: string, b: any, res: any) {
   res.status(200).json({ ok: !!post, comment });
 }
 
+async function handleEditComment(uid: string, b: any, res: any) {
+  if (!uid) {
+    res.status(401).json({ ok: false, error: 'unauthorized' });
+    return;
+  }
+  const text = String(b.text || '').trim();
+  if (!text) {
+    res.status(400).json({ ok: false, error: 'empty' });
+    return;
+  }
+  const r = await editPostComment(String(b.postId || b.id), String(b.commentId), uid, text);
+  res.status(200).json(r ? { ok: true, comment: r.comment } : { ok: false, error: 'not_found' });
+}
+
+async function handleDeleteComment(uid: string, b: any, res: any) {
+  if (!uid) {
+    res.status(401).json({ ok: false, error: 'unauthorized' });
+    return;
+  }
+  const post = await removePostComment(String(b.postId || b.id), String(b.commentId), uid);
+  res.status(200).json({ ok: !!post });
+}
+
 async function handleUpload(uid: string, b: any, res: any) {
   if (!uid) {
     res.status(401).json({ ok: false, error: 'unauthorized' });
@@ -1042,6 +1096,31 @@ async function handleReservationStatus(
 }
 
 // ── 바이트(스토리) ──
+// 사진 배치는 클라이언트가 보내는 값이라 그대로 믿지 않는다. 컴포저와 같은
+// 범위(0.2~5배, 이동 ±2 화면, 회전 0~360도)로 조여 이상한 값이 저장되지 않게
+// 한다. 회전은 음수·한 바퀴 초과가 들어와도 0~360 안으로 감는다.
+function sanitizeFit(
+  raw: any
+): { scale: number; x: number; y: number; rotate?: number } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const num = (v: any, lo: number, hi: number, dflt: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+  };
+  const rawRot = Number(raw.rotate);
+  const rotate = Number.isFinite(rawRot) ? ((rawRot % 360) + 360) % 360 : 0;
+  const fit = {
+    scale: num(raw.scale, 0.2, 5, 1),
+    x: num(raw.x, -2, 2, 0),
+    y: num(raw.y, -2, 2, 0),
+    rotate,
+  };
+  // 손대지 않은 기본 배치면 저장할 게 없다.
+  return fit.scale === 1 && fit.x === 0 && fit.y === 0 && fit.rotate === 0
+    ? undefined
+    : fit;
+}
+
 async function handleCreateBite(uid: string, b: any, res: any) {
   if (!uid) {
     res.status(401).json({ ok: false, error: 'unauthorized' });
@@ -1057,9 +1136,121 @@ async function handleCreateBite(uid: string, b: any, res: any) {
     overlays: Array.isArray(b.overlays) ? b.overlays.slice(0, 40) : [],
     filter: b.filter,
     bg: Array.isArray(b.bg) ? b.bg : undefined,
+    fit: sanitizeFit(b.fit),
     audience: b.audience === 'close' ? 'close' : 'all',
   });
   res.status(200).json({ ok: true, bite });
+}
+
+async function handleBiteLike(uid: string, b: any, res: any) {
+  if (!uid) {
+    res.status(401).json({ ok: false, error: 'unauthorized' });
+    return;
+  }
+  const r = await toggleBiteLike(String(b.id || b.biteId || ''), uid);
+  res.status(200).json(r ? { ok: true, ...r } : { ok: false, error: 'not_found' });
+}
+
+// 바이트 답장 — 인스타처럼 바이트를 보다가 남긴 글이 작성자와의 1:1 채팅으로
+// 간다. 대화가 없으면 새로 연다.
+//
+// 답장에 붙는 스토리 조각은 서버가 직접 떠서 넣는다. 클라이언트가 보낸 걸 믿으면
+// 남의 스토리인 척 꾸민 말풍선을 만들 수 있다.
+async function handleBiteReply(uid: string, b: any, res: any) {
+  if (!uid) {
+    res.status(401).json({ ok: false, error: 'unauthorized' });
+    return;
+  }
+  const biteId = String(b?.biteId || '');
+  const text = String(b?.text || '').trim().slice(0, 500);
+  if (!biteId || !text) {
+    res.status(400).json({ ok: false, error: 'empty' });
+    return;
+  }
+
+  const bite = (await allBites()).find((x) => x.id === biteId);
+  if (!bite) {
+    // 24시간이 지나 사라졌거나 작성자가 지운 경우.
+    res.status(404).json({ ok: false, error: 'gone' });
+    return;
+  }
+  if (bite.authorId === uid) {
+    res.status(400).json({ ok: false, error: 'own_bite' });
+    return;
+  }
+  // 볼 수 있는 스토리에만 답할 수 있다 — 목록(handleBites)과 같은 규칙.
+  if (bite.audience === 'close') {
+    const edges = await social.allEdges();
+    if (!social.followingIds(edges, uid).includes(bite.authorId)) {
+      res.status(403).json({ ok: false, error: 'not_visible' });
+      return;
+    }
+  }
+
+  let convId = await sb.findDirect(uid, bite.authorId);
+  if (!convId) convId = await sb.createConversation(uid, false, '', [uid, bite.authorId]);
+  if (!convId) {
+    res.status(500).json({ ok: false, error: 'no_conversation' });
+    return;
+  }
+
+  const [me, author] = await Promise.all([getUserById(uid), getUserById(bite.authorId)]);
+  const row = await sb.insertMessage(convId, uid, text, undefined, {
+    id: bite.id,
+    image: bite.image || '',
+    caption: bite.caption || '',
+    authorName: author?.name || '',
+  });
+
+  if (row) {
+    try {
+      await notifs.notify(bite.authorId, {
+        type: 'dm',
+        title: me?.name || '새 메시지',
+        body: `내 바이트에 답장: ${text.slice(0, 50)}`,
+        actorId: uid,
+      });
+    } catch {
+      // 알림 실패가 답장을 되돌리지는 않는다.
+    }
+  }
+  res.status(200).json({ ok: !!row, conversationId: convId, message: row });
+}
+
+async function handleEditBite(uid: string, b: any, res: any) {
+  if (!uid) {
+    res.status(401).json({ ok: false, error: 'unauthorized' });
+    return;
+  }
+  // 사진을 새로 골랐으면 data URL 로 온다 — 저장 후 URL 로 바꿔 넣는다.
+  // 손대지 않았으면 image 키 자체가 없어 기존 사진이 그대로 남는다.
+  let image: string | undefined;
+  if (typeof b.image === 'string') {
+    const raw = String(b.image);
+    if (raw.startsWith('data:')) image = await uploadDataUrl(raw);
+    else image = raw;
+  }
+  // fit 은 '안 보냄(그대로)' 과 '기본으로 되돌림' 을 구분해야 한다.
+  const fit = 'fit' in b ? sanitizeFit(b.fit) ?? null : undefined;
+  const updated = await updateBite(String(b.id), uid, {
+    image,
+    caption: typeof b.caption === 'string' ? b.caption : undefined,
+    overlays: Array.isArray(b.overlays) ? b.overlays : undefined,
+    filter: typeof b.filter === 'string' ? b.filter : undefined,
+    bg: Array.isArray(b.bg) ? b.bg : undefined,
+    fit,
+    audience: b.audience,
+  });
+  res.status(200).json({ ok: !!updated });
+}
+
+async function handleDeleteBite(uid: string, b: any, res: any) {
+  if (!uid) {
+    res.status(401).json({ ok: false, error: 'unauthorized' });
+    return;
+  }
+  const ok = await removeBite(String(b.id), uid);
+  res.status(200).json({ ok });
 }
 
 async function handleBites(uid: string, res: any) {
@@ -1087,32 +1278,37 @@ async function handleBites(uid: string, res: any) {
       overlays: bt.overlays || [],
       filter: bt.filter,
       bg: bt.bg,
+      fit: bt.fit,
       audience: bt.audience,
       createdAt: bt.createdAt,
       isMe: !!uid && bt.authorId === uid,
+      likeCount: Array.isArray(bt.likes) ? bt.likes.length : 0,
+      liked: !!uid && Array.isArray(bt.likes) && bt.likes.includes(uid),
     })),
   });
 }
 
-// ── 도장(패스포트) ──
-async function handleStamps(uid: string, res: any) {
-  res.status(200).json({ ok: true, stamps: uid ? await stamps.stampsFor(uid) : [] });
-}
-// 구(區)별 리뷰 진행도 — {구이름: 카운트}. 5개마다 +1 PB.
-async function handleDistrictStats(uid: string, res: any) {
+// ── 도장 패스포트 ──
+// 지역을 하나 고르고, 그 지역의 서로 다른 매장 7곳에 리뷰를 남기면 보너스 PB.
+async function handlePassport(uid: string, res: any) {
   res.status(200).json({
     ok: true,
-    districts: uid ? await districts.statsFor(uid) : {},
-    goal: districts.DISTRICT_GOAL,
+    passport: uid ? await passport.get(uid) : null,
+    goal: passport.PASSPORT_GOAL,
+    reward: passport.PASSPORT_REWARD,
   });
 }
-async function handleCollectStamp(uid: string, b: any, res: any) {
+async function handlePickRegion(uid: string, b: any, res: any) {
   if (!uid) {
     res.status(401).json({ ok: false, error: 'unauthorized' });
     return;
   }
-  const list = await stamps.addStamp(uid, String(b.name || ''));
-  res.status(200).json({ ok: true, stamps: list });
+  const key = String(b?.region || '').trim();
+  if (!findRegion(key)) {
+    res.status(400).json({ ok: false, error: 'unknown_region' });
+    return;
+  }
+  res.status(200).json({ ok: true, passport: await passport.pick(uid, key) });
 }
 
 // ── 알림 ──
@@ -1161,7 +1357,9 @@ export default async function handler(req: any, res: any) {
         res.status(200).json({ ok: true, status: 'idle' });
         return;
       }
-      res.status(200).json({ ok: true, ...(await games.poll(uid)) });
+      const matchId = String(req.query.matchId || '');
+      const wantRematch = String(req.query.want || '') === '1';
+      res.status(200).json({ ok: true, ...(await games.poll(uid, { matchId, wantRematch })) });
       return;
     }
     if (action === 'chatAuth') return await handleChatAuth(uid, res);
@@ -1201,8 +1399,7 @@ export default async function handler(req: any, res: any) {
       if (action === 'storePosts') return await handleStorePosts(String(req.query.store || ''), res);
       if (action === 'myReservations') return await handleMyReservations(uid, res);
       if (action === 'bites') return await handleBites(uid, res);
-      if (action === 'stamps') return await handleStamps(uid, res);
-      if (action === 'districtStats') return await handleDistrictStats(uid, res);
+      if (action === 'passport') return await handlePassport(uid, res);
       if (action === 'notifs') return await handleNotifs(uid, res);
       res.status(400).json({ ok: false, error: 'bad_action' });
     } catch (e: any) {
@@ -1273,6 +1470,8 @@ export default async function handler(req: any, res: any) {
       return;
     }
     if (action === 'comment') return await handleComment(uid, b, res);
+    if (action === 'editComment') return await handleEditComment(uid, b, res);
+    if (action === 'deleteComment') return await handleDeleteComment(uid, b, res);
     if (action === 'upload') return await handleUpload(uid, b, res);
     if (action === 'follow') return await handleFollow(uid, b, true, res);
     if (action === 'unfollow') return await handleFollow(uid, b, false, res);
@@ -1288,7 +1487,11 @@ export default async function handler(req: any, res: any) {
     if (action === 'cancelReservation') return await handleReservationStatus(uid, b, '취소', res);
     if (action === 'visitReservation') return await handleReservationStatus(uid, b, '방문완료', res);
     if (action === 'createBite') return await handleCreateBite(uid, b, res);
-    if (action === 'collectStamp') return await handleCollectStamp(uid, b, res);
+    if (action === 'biteLike') return await handleBiteLike(uid, b, res);
+    if (action === 'editBite') return await handleEditBite(uid, b, res);
+    if (action === 'deleteBite') return await handleDeleteBite(uid, b, res);
+    if (action === 'biteReply') return await handleBiteReply(uid, b, res);
+    if (action === 'pickRegion') return await handlePickRegion(uid, b, res);
     if (action === 'notifsRead') return await handleNotifsRead(uid, res);
     if (action === 'apply') return await handleApply(b, res);
     if (action === 'invite') return await handleInvite(b, res);

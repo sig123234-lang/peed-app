@@ -83,6 +83,18 @@ export async function putBinary(key: string, buf: Buffer): Promise<void> {
   });
 }
 
+/** 키 하나를 지운다. 증거용으로만 남기는 캡처를 정리할 때 쓴다. */
+export async function deleteKey(key: string): Promise<void> {
+  try {
+    const file = safePath(key);
+    await serialize(async () => {
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    });
+  } catch {
+    // 이미 없거나 지울 수 없으면 그냥 둔다
+  }
+}
+
 export async function getBinary(
   key: string
 ): Promise<{ buf: Buffer; contentType: string } | null> {

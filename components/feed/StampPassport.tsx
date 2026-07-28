@@ -1,106 +1,119 @@
-import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { STAMP_BOARD, STAMP_DISTRICT, useFeed } from '@/context/feed';
+import { RegionPicker } from '@/components/feed/RegionPicker';
+import { useFeed } from '@/context/feed';
 import { colors, radius, spacing } from '@/theme';
 
-// 미식 도장깨기 — Reels-style horizontal tray of tall neighborhood tiles that
-// bleeds to the screen edges (not a boxed section card). Visited = cover photo
-// with a red 도장(seal); unvisited = "＋ 도장 찍기" that opens the review flow.
-const DISTRICT = STAMP_DISTRICT;
-const BOARD = STAMP_BOARD;
+// 도장 패스포트 — 지역을 하나 고르고, 그 지역의 서로 다른 매장에 리뷰를 남길
+// 때마다 도장이 하나씩 찍힌다. 다 채우면 보너스 PB 를 받고 지역이 다시 열린다.
+//
+// 예전에는 마포구 동네 7곳이 고정으로 박혀 있어 다른 지역 사람은 쓸 수 없었다.
+// 이제 전국 시·군·구에서 직접 고른다.
 
 const SEAL_RED = '#E23B3B';
 
-const COVERS = [
-  require('../../assets/images/review1.jpg'),
-  require('../../assets/images/review2.jpg'),
-  require('../../assets/images/review3.jpg'),
-  require('../../assets/images/review4.jpg'),
-];
+export function StampPassport({
+  onOpenReview,
+  picking,
+  setPicking,
+}: {
+  onOpenReview: () => void;
+  /** 지역 선택창 열림 여부 — 바깥의 '도장' 칩에서도 열 수 있어야 해서 위로 뺐다. */
+  picking: boolean;
+  setPicking: (v: boolean) => void;
+}) {
+  const { passport, passportGoal, passportReward, pickRegion } = useFeed();
 
-export function StampPassport({ onOpenReview }: { onOpenReview: () => void }) {
-  const { stamps } = useFeed();
-  const count = BOARD.filter((n) => stamps.includes(n)).length;
+  const done = passport.stores.length;
+  const slots = Array.from({ length: passportGoal }, (_, i) => i < done);
+  const picked = !!passport.region;
+
+  const choose = async (key: string) => {
+    setPicking(false);
+    await pickRegion(key);
+  };
 
   return (
     <View style={styles.wrap}>
       <View style={styles.headerRow}>
-        <Text style={styles.title}>🗺️ {DISTRICT} 도장깨기</Text>
-        <Text style={styles.count}>
-          {count}/{BOARD.length} 도장
-        </Text>
+        <Text style={styles.title}>🗺️ 도장깨기</Text>
+        {picked ? (
+          <Text style={styles.count}>
+            {done}/{passportGoal} 도장
+          </Text>
+        ) : null}
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.tray}
-        contentContainerStyle={styles.trayContent}
-      >
-        {BOARD.map((n, i) => {
-          const done = stamps.includes(n);
-          return (
-            <TouchableOpacity
-              key={n}
-              activeOpacity={done ? 1 : 0.85}
-              disabled={done}
-              onPress={onOpenReview}
-              style={[styles.tile, !done && styles.tileTodo]}
-            >
-              {done ? (
-                <Image
-                  source={COVERS[i % COVERS.length]}
-                  style={styles.cover}
-                  contentFit="cover"
-                />
-              ) : (
-                <View style={styles.coverTodo} />
-              )}
+      {picked ? (
+        <View style={styles.board}>
+          {/* 한번 고른 지역은 완주할 때까지 바꿀 수 없다(고정). */}
+          <View style={styles.regionRow}>
+            <Text style={styles.regionName}>{passport.region}</Text>
+            <View style={styles.regionLock}>
+              <Ionicons name="lock-closed" size={11} color={colors.textTertiary} />
+              <Text style={styles.regionChange}>완주까지 고정</Text>
+            </View>
+          </View>
 
-              <LinearGradient
-                colors={['transparent', 'rgba(0,0,0,0.72)']}
-                style={styles.scrim}
-              />
-
-              {done ? (
-                <View style={styles.seal}>
+          <View style={styles.seals}>
+            {slots.map((filled, i) => (
+              <View key={i} style={[styles.seal, filled ? styles.sealOn : styles.sealOff]}>
+                {filled ? (
                   <Text style={styles.sealMark}>認</Text>
-                </View>
-              ) : (
-                <View style={styles.plusWrap}>
-                  <View style={styles.plusCircle}>
-                    <Text style={styles.plus}>＋</Text>
-                  </View>
-                  <Text style={styles.plusHint}>도장 찍기</Text>
-                </View>
-              )}
-
-              <View style={styles.tileBottom}>
-                <Text style={[styles.tileName, !done && styles.tileNameTodo]}>
-                  {n}
-                </Text>
-                <Text style={[styles.tileState, !done && styles.tileStateTodo]}>
-                  {done ? '방문완료' : '미방문'}
-                </Text>
+                ) : (
+                  <Text style={styles.sealNum}>{i + 1}</Text>
+                )}
               </View>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+            ))}
+          </View>
+
+          <Text style={styles.hint}>
+            {done === 0
+              ? `${passport.region} 매장에 리뷰를 남기면 도장이 찍혀요`
+              : `${Math.max(0, passportGoal - done)}곳 더 다녀오면 +${passportReward} PB`}
+          </Text>
+
+          <TouchableOpacity style={styles.cta} onPress={onOpenReview} activeOpacity={0.85}>
+            <Text style={styles.ctaText}>리뷰 쓰고 도장 받기</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <TouchableOpacity
+          style={styles.empty}
+          onPress={() => setPicking(true)}
+          activeOpacity={0.85}
+        >
+          <View style={styles.emptyCircle}>
+            <Text style={styles.emptyPlus}>＋</Text>
+          </View>
+          <Text style={styles.emptyTitle}>
+            {passport.completed > 0 ? '다음 지역을 골라보세요' : '지역을 골라보세요'}
+          </Text>
+          <Text style={styles.emptySub}>
+            고른 지역의 매장 {passportGoal}곳에 리뷰를 남기면 +{passportReward} PB
+          </Text>
+          {passport.completed > 0 ? (
+            <Text style={styles.emptyDone}>지금까지 {passport.completed}개 지역 완주 🎉</Text>
+          ) : null}
+        </TouchableOpacity>
+      )}
+
+      {picking ? (
+        <RegionPicker
+          current={passport.region}
+          hasProgress={done > 0}
+          onPick={choose}
+          onClose={() => setPicking(false)}
+        />
+      ) : null}
     </View>
   );
 }
 
-const TILE_W = 116;
-const TILE_H = 168;
-
 const styles = StyleSheet.create({
-  wrap: {
-    marginBottom: spacing.lg,
-  },
+  wrap: { marginBottom: spacing.lg },
 
   headerRow: {
     flexDirection: 'row',
@@ -108,122 +121,79 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.md,
   },
-  title: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  count: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: colors.coralDeep,
-  },
+  title: { fontSize: 17, fontWeight: '800', color: colors.textPrimary },
+  count: { fontSize: 13, fontWeight: '800', color: colors.coralDeep },
 
-  // bleed the tray to the screen edges (offsets the feed's horizontal padding)
-  tray: {
-    marginHorizontal: -spacing.lg,
+  board: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    gap: spacing.md,
   },
-  trayContent: {
-    paddingHorizontal: spacing.lg,
+  regionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.sm,
   },
+  regionName: { flex: 1, fontSize: 16, fontWeight: '800', color: colors.textPrimary },
+  regionLock: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  regionChange: { fontSize: 12.5, fontWeight: '700', color: colors.textTertiary },
 
-  tile: {
-    width: TILE_W,
-    height: TILE_H,
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-    backgroundColor: colors.ink,
+  seals: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  seal: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
   },
-  tileTodo: {
+  sealOn: {
+    borderColor: SEAL_RED,
+    backgroundColor: 'rgba(253,236,236,0.92)',
+    transform: [{ rotate: '-12deg' }],
+  },
+  sealOff: {
+    borderColor: colors.line,
+    borderStyle: 'dashed',
     backgroundColor: colors.surfaceAlt,
+  },
+  sealMark: { color: SEAL_RED, fontSize: 16, fontWeight: '800' },
+  sealNum: { color: colors.textTertiary, fontSize: 13, fontWeight: '800' },
+
+  hint: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
+
+  cta: {
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ctaText: { fontSize: 14, fontWeight: '800', color: colors.white },
+
+  empty: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+    gap: 6,
     borderWidth: 1.5,
     borderStyle: 'dashed',
     borderColor: colors.lineStrong,
   },
-  cover: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  coverTodo: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: colors.surfaceAlt,
-  },
-  scrim: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 90,
-  },
-
-  seal: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 2,
-    borderColor: SEAL_RED,
-    backgroundColor: 'rgba(253,236,236,0.92)',
+  emptyCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
-    transform: [{ rotate: '-12deg' }],
+    marginBottom: 2,
   },
-  sealMark: {
-    color: SEAL_RED,
-    fontSize: 15,
-    fontWeight: '800',
-  },
-
-  plusWrap: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingBottom: 34,
-    gap: 6,
-  },
-  plusCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  plus: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: colors.coral,
-    marginTop: -2,
-  },
-  plusHint: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: colors.textSecondary,
-  },
-
-  tileBottom: {
-    position: 'absolute',
-    left: 10,
-    right: 10,
-    bottom: 10,
-  },
-  tileName: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: colors.white,
-  },
-  tileNameTodo: {
-    color: colors.textPrimary,
-  },
-  tileState: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: 'rgba(255,255,255,0.85)',
-    marginTop: 1,
-  },
-  tileStateTodo: {
-    color: colors.textTertiary,
-  },
+  emptyPlus: { fontSize: 24, fontWeight: '800', color: colors.primary, marginTop: -2 },
+  emptyTitle: { fontSize: 15.5, fontWeight: '800', color: colors.textPrimary },
+  emptySub: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
+  emptyDone: { fontSize: 12.5, fontWeight: '800', color: colors.coralDeep, marginTop: 2 },
 });

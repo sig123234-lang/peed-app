@@ -16,9 +16,10 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { StampPassport } from '@/components/feed/StampPassport';
 import { AvatarCropper } from '@/components/ui/AvatarCropper';
 
-import { STAMP_BOARD, useFeed, won } from '@/context/feed';
+import { useFeed, won } from '@/context/feed';
 import { usePb } from '@/context/pb';
 import { useReservations } from '@/context/reservations';
 import { useShell } from '@/context/shell';
@@ -118,12 +119,13 @@ const TABS: { key: TabType; label: string; icon: keyof typeof Ionicons.glyphMap 
 ];
 
 export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
-  const { setTab, openOverlay, dropOverlay, openFollowList } = useShell();
+  const { setTab, openOverlay, dropOverlay, openFollowList, setShowReview } = useShell();
   const { pb } = usePb();
   const {
     myPosts,
     me,
-    stamps,
+    passport,
+    passportGoal,
     profileAvatar,
     setProfileAvatar,
     editPost,
@@ -192,22 +194,9 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
     };
   }, []);
 
-  // 구(區) 도장 진행도 — 같은 구 5개마다 +1 PB.
-  const [districtStats, setDistrictStats] = useState<Record<string, number>>({});
-  const [districtGoal, setDistrictGoal] = useState(5);
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    fetch('/api/public?action=districtStats', { credentials: 'include' })
-      .then((r) => r.json())
-      .then((d) => {
-        if (d?.ok) {
-          setDistrictStats(d.districts || {});
-          if (d.goal) setDistrictGoal(d.goal);
-        }
-      })
-      .catch(() => {});
-  }, [myPosts.length]);
 
+  // 도장 지역 선택창 — 프로필의 '도장' 칩과 패스포트 카드 양쪽에서 연다.
+  const [passportOpen, setPassportOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [selected, setSelected] = useState<GridPost | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
@@ -407,11 +396,8 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
       });
   }, [myPosts, captionEdits, privacyEdits, hiddenPosts]);
 
-  const stampCount = STAMP_BOARD.filter((n) => stamps.includes(n)).length;
-  // 구별 진행도: 방문 구 수 + 획득한 도장 보너스(5개마다 1개).
-  const districtList = Object.entries(districtStats).sort((a, b) => b[1] - a[1]);
-  const districtsVisited = districtList.length;
-  const stampBonus = districtList.reduce((s, [, c]) => s + Math.floor(c / districtGoal), 0);
+  // 도장 진행도 — 이번 지역에서 찍은 개수와 지금까지 완주한 지역 수.
+  const stampCount = passport.stores.length;
 
   // 상세 모달을 셸 오버레이로 등록 → 안드로이드 뒤로가기/스와이프가 좌상단
   // 버튼과 동일하게 '모달 닫기'를 하도록(홈으로 안 감).
@@ -518,44 +504,41 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
         <Text style={styles.name}>{name}</Text>
         <Text style={styles.handle}>{handle}</Text>
         <Text style={styles.bio}>
-          {bioLine}{'\n'}🗺️ {districtsVisited}개 구에서 리뷰 중 · 리뷰로 PB 모으는 중
+          {bioLine}{'\n'}🗺️{' '}
+          {passport.region
+            ? `${passport.region} 도장 모으는 중`
+            : passport.completed > 0
+              ? `${passport.completed}개 지역 완주`
+              : '리뷰로 PB 모으는 중'}
         </Text>
 
         <View style={styles.chips}>
           <View style={[styles.chip, styles.chipPb]}>
             <Text style={styles.chipPbText}>💎 {comma(pb)} PB</Text>
           </View>
-          <View style={[styles.chip, styles.chipStamp]}>
-            <Text style={styles.chipStampText}>🔴 도장 {stampBonus}</Text>
-          </View>
+          {/* 도장 칩 — 지역을 아직 안 골랐을 때만 선택창을 연다.
+              한번 고르면 완주까지 지역은 고정(변경 불가). */}
+          <TouchableOpacity
+            style={[styles.chip, styles.chipStamp]}
+            onPress={() => {
+              if (!passport.region) setPassportOpen(true);
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.chipStampText}>
+              🔴 도장 {passport.region ? `${stampCount}/${passportGoal}` : passport.completed}
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        {/* ── 구(區) 도장 패스포트 — 같은 구 5개마다 +1 PB ── */}
-        {districtsVisited > 0 && (
-          <View style={styles.passport}>
-            <Text style={styles.passportTitle}>
-              🗺️ 동네 도장 · 구별 리뷰 {districtGoal}개마다 +1 PB
-            </Text>
-            {districtList.map(([name, count]) => {
-              const inCycle = count % districtGoal;
-              const progress = inCycle === 0 ? districtGoal : inCycle;
-              return (
-                <View key={name} style={styles.ppRow}>
-                  <Text style={styles.ppName}>{name}</Text>
-                  <View style={styles.ppTrack}>
-                    <View
-                      style={[styles.ppFill, { width: `${(progress / districtGoal) * 100}%` }]}
-                    />
-                  </View>
-                  <Text style={styles.ppCount}>
-                    {progress}/{districtGoal}
-                    {count >= districtGoal ? ` · 🎁${Math.floor(count / districtGoal)}` : ''}
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
-        )}
+        {/* ── 도장 패스포트 — 지역을 고르고 그 지역 매장 N곳에 리뷰를 남기면 보너스 PB ── */}
+        <View style={styles.passportWrap}>
+          <StampPassport
+            onOpenReview={() => setShowReview(true)}
+            picking={passportOpen}
+            setPicking={setPassportOpen}
+          />
+        </View>
 
         <View style={styles.actions}>
           <TouchableOpacity style={styles.editBtn} activeOpacity={0.85} onPress={openEdit}>
@@ -616,7 +599,22 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
                 onPress={() => openPost(post)}
                 activeOpacity={0.9}
               >
-                <Image source={post.images[0]} style={styles.gridImage} />
+                {post.images[0] ? (
+                  <Image source={post.images[0]} style={styles.gridImage} />
+                ) : (
+                  // 이용 사진 없이 올린 글 — 영수증 조각처럼 글자로 보여준다.
+                  <View style={[styles.gridImage, styles.gridNote]}>
+                    <Text style={styles.gridNoteStore} numberOfLines={2}>
+                      {post.store || '리뷰'}
+                    </Text>
+                    {!!post.rating && (
+                      <Text style={styles.gridNoteStar}>★ {Number(post.rating).toFixed(1)}</Text>
+                    )}
+                    <Text style={styles.gridNoteBody} numberOfLines={3}>
+                      {post.caption || ''}
+                    </Text>
+                  </View>
+                )}
                 {post.isBurning && (
                   <View style={styles.burnDot}>
                     <Text style={styles.burnDotText}>🔥</Text>
@@ -884,7 +882,15 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
           {selected && (
             <ScrollView contentContainerStyle={styles.postEditBody} showsVerticalScrollIndicator={false}>
               <View style={styles.postEditTop}>
-                <Image source={selected.images[0]} style={styles.postEditThumb} />
+                {selected.images[0] ? (
+                  <Image source={selected.images[0]} style={styles.postEditThumb} />
+                ) : (
+                  <View style={[styles.postEditThumb, styles.gridNote]}>
+                    <Text style={styles.gridNoteStore} numberOfLines={2}>
+                      {selected.store || '리뷰'}
+                    </Text>
+                  </View>
+                )}
                 <View style={{ flex: 1 }}>
                   <Text style={styles.postEditStore}>{selected.store}</Text>
                   <Text style={styles.postEditMeta}>
@@ -924,8 +930,10 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
               </View>
               <Text style={styles.postEditHint}>
                 {editPrivate
-                  ? '비공개 — 홈 피드엔 안 보이고 내 프로필에서만 보여요.'
-                  : '공개 — 홈 피드에 노출돼요. 사진·영수증 정보는 수정할 수 없어요.'}
+                  ? '비공개 — 어디에도 안 보여요. 내 프로필에 놀러 온 사람에게도 숨겨져요.'
+                  : selected.images.length > 0
+                    ? '공개 — 홈 피드에 노출되고, 내 프로필에 놀러 온 사람도 볼 수 있어요.'
+                    : '공개 — 이용 사진이 없어 홈 피드엔 안 뜨지만, 내 프로필에 놀러 온 사람은 볼 수 있어요.'}
               </Text>
             </ScrollView>
           )}
@@ -1140,6 +1148,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
   },
+  passportWrap: { marginTop: spacing.lg, alignSelf: 'stretch' },
+  actions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
   chipStamp: {
     backgroundColor: '#FDECEC',
   },
@@ -1149,36 +1163,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  passport: {
-    marginTop: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    gap: spacing.xs,
-  },
-  passportTitle: {
-    fontSize: 12.5,
-    fontWeight: '800',
-    color: colors.textSecondary,
-    marginBottom: 4,
-  },
-  ppRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  ppName: { width: 64, fontSize: 13, fontWeight: '800', color: colors.textPrimary },
-  ppTrack: {
-    flex: 1,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.lineStrong,
-    overflow: 'hidden',
-  },
-  ppFill: { height: '100%', borderRadius: 4, backgroundColor: colors.primary },
-  ppCount: { minWidth: 58, textAlign: 'right', fontSize: 12, fontWeight: '800', color: colors.textSecondary },
-
-  actions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
   editBtn: {
     flex: 1,
     height: 40,
@@ -1279,6 +1263,28 @@ const styles = StyleSheet.create({
   gridImage: {
     width: '100%',
     height: '100%',
+  },
+  // 사진 없는 글 타일 — 영수증 종이 느낌으로 글자만 얹는다.
+  gridNote: {
+    backgroundColor: colors.paper,
+    borderWidth: 1,
+    borderColor: colors.line,
+    padding: spacing.sm,
+    justifyContent: 'center',
+    gap: 2,
+  },
+  gridNoteStore: {
+    fontSize: 11.5,
+    fontWeight: '900',
+    color: colors.paperInk,
+    lineHeight: 15,
+  },
+  gridNoteStar: { fontSize: 10.5, fontWeight: '800', color: colors.tangerine },
+  gridNoteBody: {
+    fontSize: 10,
+    lineHeight: 14,
+    color: colors.textSecondary,
+    marginTop: 1,
   },
   burnDot: {
     position: 'absolute',

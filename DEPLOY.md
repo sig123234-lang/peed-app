@@ -25,6 +25,22 @@ Vercel · Supabase 없이 이 서버 한 대에서 전부 돌아갑니다.
 | 음성통화 | LiveKit | **비활성** (키 넣으면 재활성) |
 | 로그인 세션 | HMAC 쿠키 | 그대로 (원래 외부 의존 없음) |
 | HTTPS·도메인 | Vercel | Caddy + Let's Encrypt (자동 갱신) |
+| 리뷰 캡처 판독 | — | **Tesseract 5 (kor+eng)** — 서버에 직접 설치, 외부 AI API 없음 |
+
+### 시스템 패키지 (서버를 새로 만들 때 반드시 설치)
+
+리뷰 인증은 네이버 '리뷰 쓰기 완료' 캡처를 서버에서 읽어 매장명·별점·본문을
+자동으로 채웁니다(`api/_ocr.ts`). Tesseract 가 없으면 오류가 나지는 않고 자동
+입력만 조용히 꺼지므로(유저가 직접 입력), 빠뜨려도 눈치채기 어렵습니다.
+
+```sh
+sudo apt-get install -y tesseract-ocr tesseract-ocr-kor tesseract-ocr-eng
+tesseract --list-langs   # eng, kor 이 보여야 정상
+```
+
+캡처 한 장에 약 3.5초 / 90MB 를 씁니다. 동시 실행은 2건으로 제한되어 있고
+(`PEED_OCR_PARALLEL`), `peed.service` 의 `MemoryMax=1200M` 안에서 넉넉합니다.
+실행 파일 경로가 다르면 `PEED_TESSERACT` 로 지정할 수 있습니다.
 
 `nip.io` 는 IP 를 그대로 도메인으로 바꿔주는 무료 DNS 입니다.
 `43-200-104-183.nip.io` → `43.200.104.183`. 별도 등록·비용 없습니다.

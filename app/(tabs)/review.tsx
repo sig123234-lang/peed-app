@@ -3,8 +3,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Dimensions,
   Image,
   PanResponder,
@@ -18,63 +19,27 @@ import {
 
 import { BlurBackdrop } from '@/components/ui/BlurBackdrop';
 import { AppButton, Badge } from '@/components/ui/kit';
-import { STAMP_DISTRICT, detectNeighborhood, useFeed } from '@/context/feed';
+import { useFeed } from '@/context/feed';
 import { usePb } from '@/context/pb';
-import {
-  APP_WIDTH,
-  colors,
-  gradients,
-  radius,
-  shadow,
-  spacing,
-  type,
-} from '@/theme';
+import { APP_WIDTH, colors, gradients, radius, shadow, spacing } from '@/theme';
 
 type ReviewScreenProps = {
   onBack?: () => void;
 };
 
-// The review now renders as a popup card over a blurred backdrop (the feed
-// stays mounted behind). Card sizes fit the column and the screen height.
+// 리뷰 인증 — 캡처 한 장으로 끝내는 흐름.
+//
+//   ① 일회용 인증 코드를 받아 네이버 리뷰 맨 앞에 붙인다
+//   ② '리뷰 쓰기 완료!' 화면을 캡처해서 올린다
+//   ③ 서버가 읽어 매장명·별점·본문을 자동으로 채운다 → 확인만 하고 제출
+//
+// 예전에는 매장명·인원·금액·메뉴·플랫폼·별점·본문을 손으로 다 입력하고,
+// 버닝 매장인지도 유저가 직접 골라야 했다(모르고 일반으로 고르면 2PB만 들어갔다).
+// 이제 버닝 판정은 서버가 매장명으로 하므로 유형을 고르는 단계 자체가 없다.
+
 const CARD_W = Math.min(APP_WIDTH - spacing.lg * 2, 560);
 const MODAL_MAX_H = Math.round(Dimensions.get('window').height * 0.92);
-const CONTENT_W = CARD_W - spacing.lg * 2;
 const INTRO_W = Math.min(CARD_W - spacing.lg * 2, 440);
-
-// 인증 키워드 — 외부 리뷰(네이버·카카오·구글) 맨 앞에 붙이는 표식.
-// 'PEED)' 와 '피드)' 를 모두 허용(대소문자·공백 유연).
-const KEYWORDS = ['PEED)', '피드)'] as const;
-const KEYWORD_RE = /(?:peed|피드)\s*\)/i;
-const hasKeyword = (t: string) => KEYWORD_RE.test(t);
-const stripKeyword = (t: string) => t.replace(/^\s*(?:peed|피드)\s*\)\s*/i, '').trim();
-
-const STEPS = [
-  {
-    emoji: '✍️',
-    title: '외부 리뷰를 쓸 때\n인증 키워드를 붙여요',
-    tip: '네이버·카카오·구글 리뷰 맨 앞에 「PEED)」 또는 「피드)」를 붙여주세요. 이게 인증 키워드예요!',
-  },
-  {
-    emoji: '📸',
-    title: '그 리뷰 화면을\n스크린샷으로 찍어요',
-    tip: '키워드가 보이게 찍어주세요. 모바일·PC 어떤 플랫폼이든 OK.',
-  },
-  {
-    emoji: '💎',
-    title: '여기서 인증하면\nPB 즉시 지급!',
-    tip: '리뷰 내용을 그대로 붙여넣고 스크린샷을 올리면 끝!',
-  },
-  {
-    emoji: '📷',
-    title: '이용 사진도\n함께 올려요',
-    tip: '이용 사진을 올리면 내 피드에도 게시돼요. 안 올리면 인증·PB 적립만 되고 피드엔 안 올라가요. (최대 5장)',
-  },
-  {
-    emoji: '⚠️',
-    title: '인증 전\n확인해 주세요',
-    tip: '',
-  },
-] as const;
 
 function CloseButton({ onPress }: { onPress?: () => void }) {
   return (
@@ -84,10 +49,10 @@ function CloseButton({ onPress }: { onPress?: () => void }) {
   );
 }
 
+/* ------------------------------------------------------------- 별점 */
+
 // 드래그 가능한 별점 — 탭 또는 드래그로 0.5~5.0(소수점 1자리)을 고른다.
-// 별 5개는 그대로 두되 부분 채움으로 소수점을 표현.
 const STAR_SIZE = 38;
-const STAR_GAP = 6;
 
 function StarRating({
   value,
@@ -104,7 +69,7 @@ function StarRating({
     const w = rowWRef.current;
     if (w <= 0) return;
     let r = (x / w) * 5;
-    r = Math.round(r * 10) / 10; // 소수점 1자리
+    r = Math.round(r * 10) / 10;
     r = Math.max(0.5, Math.min(5, r));
     onChangeRef.current(r);
   };
@@ -135,7 +100,7 @@ function StarRating({
             <View key={i} style={styles.starCell} pointerEvents="none">
               <Ionicons name="star" size={STAR_SIZE} color={colors.lineStrong} />
               <View style={[styles.starFill, { width: STAR_SIZE * fill }]}>
-                <Ionicons name="star" size={STAR_SIZE} color={colors.coral} />
+                <Ionicons name="star" size={STAR_SIZE} color={colors.tangerine} />
               </View>
             </View>
           );
@@ -146,95 +111,205 @@ function StarRating({
   );
 }
 
+/* ------------------------------------------------------------- 화면 */
+
 export default function ReviewScreen({ onBack }: ReviewScreenProps) {
   const { pb, earn, setBalance } = usePb();
-  const { addPost, collectStamp, stamps, me } = useFeed();
+  const { addPost, me, refreshPassport } = useFeed();
 
-  const [step, setStep] = useState(1);
-  const [showForm, setShowForm] = useState(false);
+  const [stage, setStage] = useState<'prep' | 'form' | 'success'>('prep');
   const [dontShowAgain, setDontShowAgain] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
 
-  // 인증 키워드 안내 카드 — X로 끄면 '다시 보지 않기'가 뜨고, 누르면 영구 숨김.
-  const [kwHidden, setKwHidden] = useState(false);
-  const [kwPrompt, setKwPrompt] = useState(false);
+  // 일회용 인증 코드
+  const [code, setCode] = useState('');
+  const [codeErr, setCodeErr] = useState('');
 
-  const [receiptImage, setReceiptImage] = useState<string | null>(null);
-  const [photos, setPhotos] = useState<string[]>([]);
+  // 캡처 판독
+  const [shotImage, setShotImage] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanId, setScanId] = useState('');
+  const [scanDone, setScanDone] = useState(false);
+  const [scanErr, setScanErr] = useState('');
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [autoBurning, setAutoBurning] = useState(false);
+  const [autoReward, setAutoReward] = useState(2);
+  const [scannedStore, setScannedStore] = useState('');
 
+  // 폼 (판독 결과로 자동 채워지고, 유저가 고칠 수 있다)
   const [storeName, setStoreName] = useState('');
-  const [peopleCount, setPeopleCount] = useState('');
-  const [totalPrice, setTotalPrice] = useState('');
-  const [menu, setMenu] = useState('');
+  const [category, setCategory] = useState('');
+  const [location, setLocation] = useState('');
   const [platform, setPlatform] = useState('');
   const [rating, setRating] = useState<number | null>(null);
   const [comment, setComment] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState('');
-  const [earnedPb, setEarnedPb] = useState(0);
-  const [earnedStamp, setEarnedStamp] = useState('');
-  // 구(區) 도장 보너스(리뷰 5개 달성) — 성공 화면에 표시.
-  const [districtBonus, setDistrictBonus] = useState<{ district: string; count: number } | null>(
-    null
-  );
-  const [showBurningStoreModal, setShowBurningStoreModal] = useState(false);
-  const [burningStoreSearch, setBurningStoreSearch] = useState('');
-  const [isBurningReview, setIsBurningReview] = useState(false);
-  const [selectedBurningStore, setSelectedBurningStore] = useState('');
-  const [isPublic, setIsPublic] = useState(true); // 공개(피드 노출) / 비공개(내 프로필만)
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [isPublic, setIsPublic] = useState(true);
 
-  // Burning stores come from the live server (same active/paying stores that show
-  // on the map), so the review picker only lists real registered stores.
-  const [burningStores, setBurningStores] = useState<
-    { id: string; name: string; reward: number; category: string; location: string }[]
-  >([]);
-  useEffect(() => {
-    let alive = true;
-    fetch('/api/stores')
-      .then((r) => r.json())
-      .then((d) => {
-        if (!alive || !Array.isArray(d?.stores)) return;
-        setBurningStores(
-          d.stores.map((s: any) => ({
-            id: s.id,
-            name: s.name,
-            reward: typeof s.reward === 'number' ? s.reward : 10,
-            category: s.category || '버닝 매장',
-            location: s.location || s.region || '',
-          }))
-        );
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
+  // 선택 정보 — 접어 둔다. 필수였을 때 이탈 이유였던 칸들이다.
+  const [extraOpen, setExtraOpen] = useState(false);
+  const [peopleCount, setPeopleCount] = useState('');
+  const [totalPrice, setTotalPrice] = useState('');
+  const [menu, setMenu] = useState('');
+
+  // 결과
+  const [earnedPb, setEarnedPb] = useState(0);
+  const [awardedBurning, setAwardedBurning] = useState(false);
+  const [stampResult, setStampResult] = useState<{
+    region: string;
+    count: number;
+    goal: number;
+    done: boolean;
+    bonusPb: number;
+  } | null>(null);
+
+  /* ---------------------------------------------------------- 초기화 */
+
+  const loadCode = useCallback(async () => {
+    setCodeErr('');
+    try {
+      const r = await fetch('/api/verify?action=code', { credentials: 'include' });
+      const d = await r.json();
+      if (d?.ok && d.code) setCode(String(d.code));
+      else setCodeErr(d?.error === 'login_required' ? '로그인이 필요해요.' : '코드를 받지 못했어요.');
+    } catch {
+      setCodeErr('코드를 받지 못했어요. 잠시 후 다시 시도해 주세요.');
+    }
   }, []);
 
-  const getRewardPb = () => {
-    if (isBurningReview && selectedBurningStore) {
-      const matched = burningStores.find((s) => s.name === selectedBurningStore);
-      if (matched) return matched.reward;
+  useEffect(() => {
+    loadCode();
+    (async () => {
+      try {
+        const v = await AsyncStorage.getItem('HIDE_REVIEW_GUIDE');
+        if (v === 'true') {
+          setDontShowAgain(true);
+          setStage('form');
+        }
+      } catch {
+        // 저장값을 못 읽으면 그냥 안내를 보여준다
+      }
+    })();
+  }, [loadCode]);
+
+  const toggleDontShow = async () => {
+    const next = !dontShowAgain;
+    setDontShowAgain(next);
+    try {
+      await AsyncStorage.setItem('HIDE_REVIEW_GUIDE', next ? 'true' : 'false');
+    } catch {
+      // 저장 실패는 무시 — 다음에 다시 보일 뿐이다
     }
-    return 2;
   };
 
-  const filteredBurningStores = burningStores.filter((s) =>
-    s.name.toLowerCase().includes(burningStoreSearch.toLowerCase())
-  );
-
-  // 인증 키워드가 리뷰 내용에 포함됐는지(실시간).
-  const keywordOk = hasKeyword(comment);
-
-  const copyKeyword = (kw: string) => {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(kw);
+  const copyCode = async () => {
+    if (!code || typeof navigator === 'undefined' || !navigator.clipboard) return;
+    const plain = `${code}) `;
+    try {
+      const W = window as any;
+      const html = `<b style="color:#5B4DF5;font-weight:700">${code})</b>&nbsp;`;
+      if (W?.ClipboardItem && navigator.clipboard.write) {
+        await navigator.clipboard.write([
+          new W.ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/plain': new Blob([plain], { type: 'text/plain' }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(plain);
+      }
       if (typeof window !== 'undefined' && window.alert) {
-        window.alert(`「${kw}」 복사됐어요! 외부 리뷰 맨 앞에 붙여넣어 주세요.`);
+        window.alert(`「${code})」 복사됐어요!\n네이버 리뷰 맨 앞에 붙여넣어 주세요.`);
+      }
+    } catch {
+      try {
+        await navigator.clipboard.writeText(plain);
+      } catch {
+        // 클립보드가 막혔으면 화면의 코드를 직접 옮겨 적게 둔다
       }
     }
   };
 
-  // 태그: 단어 입력 → 추가(공백·#·특수문자 정리), 최대 6개.
+  /* ---------------------------------------------------------- 사진 */
+
+  const pickImage = async (target: 'shot' | 'photos') => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      alert('사진 접근 권한이 필요합니다.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: target === 'shot' ? 0.9 : 0.7, // 캡처는 글자를 읽어야 해서 덜 줄인다
+      allowsMultipleSelection: target === 'photos',
+      selectionLimit: target === 'photos' ? 5 : 1,
+      base64: target === 'shot',
+    });
+    if (result.canceled) return;
+
+    if (target === 'photos') {
+      setPhotos((prev) => [...prev, ...result.assets.map((a) => a.uri)].slice(0, 5));
+      return;
+    }
+
+    const asset = result.assets[0];
+    setShotImage(asset.uri);
+    const dataUrl = asset.base64
+      ? `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}`
+      : await uriToDataUrl(asset.uri);
+    if (dataUrl) scanShot(dataUrl);
+    else setScanErr('사진을 읽지 못했어요. 아래에 직접 입력해 주세요.');
+  };
+
+  /** 캡처를 서버로 보내 판독한다. 실패해도 손으로 입력해서 계속 진행할 수 있다. */
+  const scanShot = async (dataUrl: string) => {
+    setScanning(true);
+    setScanErr('');
+    setWarnings([]);
+    try {
+      const r = await fetch('/api/verify?action=scan', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shot: dataUrl }),
+      });
+      const d = await r.json();
+      if (!d?.ok) {
+        setScanErr(
+          d?.error === 'ocr_unavailable'
+            ? '지금은 자동 입력을 쓸 수 없어요. 아래에 직접 입력해 주세요.'
+            : d?.error === 'unreadable'
+              ? '캡처가 흐려서 읽지 못했어요. 다시 찍거나 아래에 직접 입력해 주세요.'
+              : '판독에 실패했어요. 아래에 직접 입력해 주세요.'
+        );
+        setScanDone(true);
+        return;
+      }
+      setScanId(String(d.scanId || ''));
+      setWarnings(Array.isArray(d.warnings) ? d.warnings : []);
+      setAutoBurning(!!d.burning);
+      setAutoReward(Number(d.reward) || 2);
+      setScannedStore(String(d.scannedStore || ''));
+
+      const f = d.fields || {};
+      if (f.store) setStoreName(String(f.store));
+      if (f.category) setCategory(String(f.category));
+      if (f.region) setLocation(String(f.region));
+      if (f.platform) setPlatform(String(f.platform));
+      if (f.rating) setRating(Number(f.rating));
+      if (f.body) setComment(String(f.body));
+      setScanDone(true);
+    } catch {
+      setScanErr('판독에 실패했어요. 아래에 직접 입력해 주세요.');
+      setScanDone(true);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  /* ---------------------------------------------------------- 태그 */
+
   const addTag = (raw: string) => {
     const t = raw.replace(/[#\s]/g, '').replace(/[^0-9a-zA-Z가-힣]/g, '').trim();
     if (!t) {
@@ -246,156 +321,44 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
   };
   const removeTag = (t: string) => setTags((prev) => prev.filter((x) => x !== t));
 
-  // 추천 태그 — 매장·카테고리·동네에서 자동 생성.
   const suggestedTags = useMemo(() => {
-    const store = (isBurningReview ? selectedBurningStore : storeName).trim();
-    const hood = detectNeighborhood(`${store} ${comment}`);
-    const cat = isBurningReview
-      ? (burningStores.find((b) => b.name === selectedBurningStore)?.category || '').replace(/\s/g, '')
-      : '';
-    const out = [
-      hood,
-      cat,
-      hood && cat ? `${hood}${cat}` : '',
-      store.replace(/\s/g, ''),
-    ];
-    return Array.from(new Set(out)).filter((t) => t && !tags.includes(t)).slice(0, 5);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isBurningReview, selectedBurningStore, storeName, comment, tags]);
+    const out = [category.replace(/\s/g, ''), storeName.replace(/\s/g, '')];
+    return Array.from(new Set(out)).filter((t) => t && !tags.includes(t)).slice(0, 4);
+  }, [category, storeName, tags]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const value = await AsyncStorage.getItem('HIDE_REVIEW_GUIDE');
-        if (value === 'true') {
-          setDontShowAgain(true);
-          setShowForm(true);
-        }
-        const kw = await AsyncStorage.getItem('HIDE_KEYWORD_GUIDE');
-        if (kw === 'true') setKwHidden(true);
-      } catch {
-        console.log('저장값 불러오기 실패');
-      }
-    })();
-  }, []);
+  /* ---------------------------------------------------------- 제출 */
 
-  const dismissKeyword = () => {
-    setKwHidden(true);
-    setKwPrompt(true);
-  };
-  const neverShowKeyword = async () => {
-    setKwPrompt(false);
-    try {
-      await AsyncStorage.setItem('HIDE_KEYWORD_GUIDE', 'true');
-    } catch {
-      console.log('저장 실패');
-    }
-  };
-
-  const pickImage = async (target: 'receipt' | 'photos') => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      alert('사진 접근 권한이 필요합니다.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.7,
-      allowsMultipleSelection: target === 'photos',
-      selectionLimit: target === 'photos' ? 5 : 1,
-    });
-    if (!result.canceled) {
-      if (target === 'receipt') {
-        setReceiptImage(result.assets[0].uri);
-      } else {
-        const uris = result.assets.map((a) => a.uri);
-        setPhotos((prev) => [...prev, ...uris].slice(0, 5));
-      }
-    }
-  };
-
-  const isFormValid = useMemo(() => {
-    const hasStore = isBurningReview
-      ? selectedBurningStore.trim().length > 0
-      : storeName.trim().length > 0;
-    return (
-      hasStore &&
-      peopleCount.trim().length > 0 &&
-      totalPrice.trim().length > 0 &&
-      menu.trim().length > 0 &&
-      platform.trim().length > 0 &&
-      rating !== null &&
-      comment.trim().length > 0 &&
-      hasKeyword(comment) &&
-      !!receiptImage
-    );
-  }, [
-    isBurningReview,
-    selectedBurningStore,
-    storeName,
-    peopleCount,
-    totalPrice,
-    menu,
-    platform,
-    rating,
-    comment,
-    receiptImage,
-  ]);
-
-  const toggleDontShow = async () => {
-    try {
-      const next = !dontShowAgain;
-      setDontShowAgain(next);
-      await AsyncStorage.setItem('HIDE_REVIEW_GUIDE', next ? 'true' : 'false');
-    } catch {
-      console.log('저장 실패');
-    }
-  };
-
-  const nextStep = () => {
-    if (step < 5) {
-      setStep(step + 1);
-      return;
-    }
-    setShowForm(true);
-  };
-  const prevStep = () => step > 1 && setStep(step - 1);
+  const isFormValid =
+    storeName.trim().length > 0 && rating !== null && comment.trim().length > 0;
 
   const handleSubmit = async () => {
     if (!isFormValid) return;
-    const reward = getRewardPb();
+    const reward = autoBurning ? autoReward : 2;
     setEarnedPb(reward);
+    setAwardedBurning(autoBurning);
     earn(reward);
 
-    const store = isBurningReview ? selectedBurningStore : storeName;
-    // 피드 캡션에선 인증 키워드를 떼어 깔끔하게 게시.
-    const cleanCaption = stripKeyword(comment) || comment.trim();
-    const hood = detectNeighborhood(`${store} ${cleanCaption}`);
-    const isNewStamp = !!hood && !stamps.includes(hood);
-    // 구(區) 판별용 위치 텍스트 — 버닝은 매장 위치, 일반은 매장명/내용.
-    const storeLoc = isBurningReview
-      ? burningStores.find((b) => b.name === selectedBurningStore)?.location || ''
-      : '';
-    const districtHint = (`${storeLoc} ${store} ${cleanCaption}`.match(/([가-힣]{2,4}구)(?=[\s·,]|$)/) || [])[1] || '';
+    const store = storeName.trim();
+    const caption = comment.trim();
 
-    // 이용 사진을 올린 경우에만 내 피드에 게시(사진 없으면 인증·적립만).
-    if (photos.length > 0) {
-      addPost({
-        store,
-        image: { uri: photos[0] },
-        rating: rating ?? 5,
-        caption: cleanCaption,
-        tags,
-        location: hood ? `${hood} · ${STAMP_DISTRICT}` : '',
-        people: Number(peopleCount) || 1,
-        price: Number(String(totalPrice).replace(/[^0-9]/g, '')) || 0,
-        isBurning: isBurningReview,
-        earnedPb: reward,
-        isPrivate: !isPublic,
-      });
-    }
+    // 게시물은 항상 만든다. 이용 사진이 없으면 홈 피드에는 안 뜨지만,
+    // 공개로 두면 다른 사람이 내 프로필에 놀러 왔을 때 볼 수 있다.
+    addPost({
+      store,
+      category,
+      image: photos.length > 0 ? { uri: photos[0] } : undefined,
+      rating: rating ?? 5,
+      caption,
+      tags,
+      location,
+      people: Number(peopleCount.replace(/[^0-9]/g, '')) || 1,
+      price: Number(String(totalPrice).replace(/[^0-9]/g, '')) || 0,
+      isBurning: autoBurning,
+      earnedPb: reward,
+      isPrivate: !isPublic,
+    });
 
-    // 서버에 리뷰 저장 + PB 적립(매장당 하루 1회). 응답의 서버 잔액으로 정합.
+    // 서버에 리뷰 저장 + PB 적립. 버닝 여부·적립액은 서버가 다시 판정한다.
     fetch('/api/review', {
       method: 'POST',
       credentials: 'include',
@@ -405,643 +368,516 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
         handle: me.handle,
         store,
         rating: rating ?? 5,
-        caption: cleanCaption,
-        burning: isBurningReview,
-        verified: hasKeyword(comment),
+        caption,
         platform,
-        location: storeLoc,
-        district: districtHint,
+        location,
+        scanId,
       }),
     })
       .then((r) => r.json())
       .then((d) => {
         if (d && typeof d.balance === 'number') setBalance(d.balance);
-        // 구 도장 5개 달성 보너스(+1 PB).
-        if (d && d.bonusPb > 0 && d.district) {
-          setDistrictBonus({ district: d.district, count: d.districtCount || 5 });
+        if (typeof d?.award === 'number' && d.award > 0) setEarnedPb(d.award);
+        if (typeof d?.burning === 'boolean') setAwardedBurning(d.burning);
+        if (d?.stampAdded) {
+          setStampResult({
+            region: String(d.region || ''),
+            count: Number(d.stampCount) || 0,
+            goal: Number(d.goal) || 5,
+            done: !!d.passportDone,
+            bonusPb: Number(d.bonusPb) || 0,
+          });
         }
+        refreshPassport();
       })
       .catch(() => {});
 
-    setEarnedStamp(isNewStamp ? hood : '');
-    setDistrictBonus(null);
-    setShowSuccess(true);
+    setStampResult(null);
+    setStage('success');
   };
 
-  /* ------------------------------------------------------------ success */
+  /* ------------------------------------------------------------ 완료 */
 
-  if (showSuccess) {
+  if (stage === 'success') {
     return (
       <BlurBackdrop onPress={onBack}>
         <View style={styles.popupCard}>
-        <StatusBar style="dark" />
-        <ScrollView style={styles.modalScroll} contentContainerStyle={styles.centerScroll}>
-          <View style={[styles.centerWrap, { alignItems: 'center' }]}>
-            <LinearGradient
-              colors={gradients.lime}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.successCoin}
-            >
-              <Text style={styles.successCoinText}>💎</Text>
-            </LinearGradient>
+          <StatusBar style="dark" />
+          <ScrollView style={styles.modalScroll} contentContainerStyle={styles.centerScroll}>
+            <View style={[styles.centerWrap, { alignItems: 'center' }]}>
+              <LinearGradient
+                colors={awardedBurning ? gradients.hot : gradients.lime}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.successCoin}
+              >
+                <Text style={styles.successCoinText}>{awardedBurning ? '🔥' : '💎'}</Text>
+              </LinearGradient>
 
-            <Text style={styles.successTitle}>PB 적립 완료!</Text>
-            <View style={styles.successRewardPill}>
-              <Text style={styles.successRewardText}>+{earnedPb} PB 적립</Text>
-            </View>
-            <Text style={styles.successCurrentPb}>현재 보유 {pb} PB</Text>
-
-            {districtBonus ? (
-              <View style={[styles.successStampBadge, { backgroundColor: colors.primarySoft }]}>
-                <Text style={[styles.successStampText, { color: colors.primary }]}>
-                  🗺️ {districtBonus.district} 리뷰 {districtBonus.count}개 달성! 도장 보너스 +1 PB 🎉
-                </Text>
+              <Text style={styles.successTitle}>PB 적립 완료!</Text>
+              <View style={styles.successRewardPill}>
+                <Text style={styles.successRewardText}>+{earnedPb} PB 적립</Text>
               </View>
-            ) : earnedStamp ? (
-              <View style={styles.successStampBadge}>
-                <Text style={styles.successStampText}>
-                  🗺️ {earnedStamp} 첫 방문 도장 획득!
-                </Text>
-              </View>
-            ) : null}
+              <Text style={styles.successCurrentPb}>현재 보유 {pb} PB</Text>
 
-            <Text style={styles.successDesc}>
-              리뷰 인증이 접수됐어요.{'\n'}
-              {photos.length > 0
-                ? '이용 사진과 함께 내 피드에도 게시됐어요! 🎉'
-                : '이용 사진을 안 올려서 피드엔 게시되지 않았어요.'}
-            </Text>
-
-            <View style={styles.successInfoCard}>
-              <InfoLine
-                label="매장명"
-                value={isBurningReview ? selectedBurningStore || '-' : storeName || '-'}
-              />
-              <InfoLine label="리뷰 플랫폼" value={platform || '-'} />
-              <InfoLine label="만족도" value={rating ? `${rating.toFixed(1)}점` : '-'} last />
-            </View>
-
-            <AppButton
-              label="홈으로 돌아가기"
-              variant="gradient"
-              onPress={() => onBack?.()}
-              style={{ width: '100%' }}
-            />
-          </View>
-        </ScrollView>
-        </View>
-      </BlurBackdrop>
-    );
-  }
-
-  /* --------------------------------------------------------------- intro */
-
-  if (!showForm) {
-    const cur = STEPS[step - 1];
-    return (
-      <BlurBackdrop onPress={onBack}>
-        <View style={styles.popupCard}>
-        <StatusBar style="dark" />
-        <View style={styles.topBar}>
-          <Text style={styles.topBarTitle}>리뷰 인증 방법</Text>
-          <CloseButton onPress={onBack} />
-        </View>
-
-        <ScrollView style={styles.modalScroll} contentContainerStyle={styles.introScroll}>
-          <View style={[styles.introCard, { width: INTRO_W }]}>
-            <View style={styles.dotsRow}>
-              {[1, 2, 3, 4, 5].map((i) => (
-                <View
-                  key={i}
-                  style={[styles.dot, step >= i && styles.dotActive]}
-                />
-              ))}
-            </View>
-
-            <LinearGradient
-              colors={gradients.dusk}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.introHero}
-            >
-              <Text style={styles.introStepTag}>STEP {step} / 5</Text>
-              <Text style={styles.introEmoji}>{cur.emoji}</Text>
-            </LinearGradient>
-
-            <Text style={styles.introStepTitle}>{cur.title}</Text>
-
-            {cur.tip ? (
-              <View style={styles.tipBox}>
-                <Text style={styles.tipText}>
-                  <Text style={styles.tipStrong}>TIP! </Text>
-                  {cur.tip}
-                </Text>
-              </View>
-            ) : null}
-
-            {step === 5 && (
-              <>
-                <View style={styles.warningBox}>
-                  <Text style={styles.warningText}>
-                    ⚠ 부정 인증·중복·허위 리뷰는 검토 후 지급 취소되거나 이용이
-                    제한될 수 있어요.
+              {awardedBurning && (
+                <View style={styles.burnBanner}>
+                  <Text style={styles.burnBannerText}>
+                    🔥 버닝 매장이라 {earnedPb}PB로 적립됐어요!{'\n'}
+                    따로 고르지 않아도 PEED가 알아서 챙겨드려요.
                   </Text>
                 </View>
-                <TouchableOpacity
-                  style={styles.checkboxRow}
-                  onPress={toggleDontShow}
-                  activeOpacity={0.8}
-                >
-                  <View
-                    style={[styles.checkbox, dontShowAgain && styles.checkboxOn]}
-                  >
-                    {dontShowAgain && (
-                      <Ionicons name="checkmark" size={14} color={colors.white} />
-                    )}
-                  </View>
-                  <Text style={styles.checkboxLabel}>다시 보지 않기</Text>
-                </TouchableOpacity>
-              </>
-            )}
-
-            <View style={styles.introButtons}>
-              {step > 1 && (
-                <AppButton
-                  label="이전"
-                  variant="ghost"
-                  onPress={prevStep}
-                  style={{ flex: 1 }}
-                />
               )}
+
+              {stampResult?.done ? (
+                <View style={[styles.successStampBadge, { backgroundColor: colors.primarySoft }]}>
+                  <Text style={[styles.successStampText, { color: colors.primary }]}>
+                    🗺️ {stampResult.region} 도장 {stampResult.goal}개 완주! 보너스 +
+                    {stampResult.bonusPb} PB 🎉{'\n'}새 지역을 고를 수 있어요
+                  </Text>
+                </View>
+              ) : stampResult ? (
+                <View style={styles.successStampBadge}>
+                  <Text style={styles.successStampText}>
+                    🗺️ {stampResult.region} 도장 {stampResult.count}/{stampResult.goal} 획득!
+                  </Text>
+                </View>
+              ) : null}
+
+              <Text style={styles.successDesc}>
+                {photos.length > 0
+                  ? '이용 사진과 함께 홈 피드에 게시됐어요! 🎉'
+                  : isPublic
+                    ? '이용 사진이 없어 홈 피드엔 안 뜨지만,\n내 프로필에서는 누구나 볼 수 있어요.'
+                    : '비공개로 저장했어요. 나만 볼 수 있어요.'}
+              </Text>
+
+              <View style={styles.successInfoCard}>
+                <InfoLine label="매장명" value={storeName || '-'} />
+                <InfoLine label="리뷰 플랫폼" value={platform || '-'} />
+                <InfoLine
+                  label="만족도"
+                  value={rating ? `${rating.toFixed(1)}점` : '-'}
+                  last
+                />
+              </View>
+
               <AppButton
-                label={step < 5 ? '다음' : '시작하기'}
+                label="홈으로 돌아가기"
                 variant="gradient"
-                onPress={nextStep}
-                style={{ flex: 1.5 }}
+                onPress={() => onBack?.()}
+                style={{ width: '100%' }}
               />
             </View>
-          </View>
-        </ScrollView>
+          </ScrollView>
         </View>
       </BlurBackdrop>
     );
   }
 
-  /* ---------------------------------------------------------------- form */
+  /* ------------------------------------------------------------ 준비 */
 
-  return (
-    <BlurBackdrop onPress={onBack}>
-      <View style={styles.popupCard}>
-      <StatusBar style="dark" />
-
-      {showBurningStoreModal && (
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { width: INTRO_W }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>버닝 매장 선택</Text>
-              <CloseButton
-                onPress={() => {
-                  setShowBurningStoreModal(false);
-                  setBurningStoreSearch('');
-                }}
-              />
-            </View>
-
-            <View style={styles.searchWrap}>
-              <Ionicons name="search" size={17} color={colors.textTertiary} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="버닝 매장 검색"
-                placeholderTextColor={colors.textTertiary}
-                value={burningStoreSearch}
-                onChangeText={setBurningStoreSearch}
-              />
-            </View>
-
-            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
-              {filteredBurningStores.length > 0 ? (
-                filteredBurningStores.map((s) => {
-                  const selected = selectedBurningStore === s.name;
-                  return (
-                    <TouchableOpacity
-                      key={s.id}
-                      style={[styles.storeItem, selected && styles.storeItemOn]}
-                      onPress={() => {
-                        setSelectedBurningStore(s.name);
-                        setShowBurningStoreModal(false);
-                        setBurningStoreSearch('');
-                      }}
-                      activeOpacity={0.85}
-                    >
-                      <View style={{ flex: 1 }}>
-                        <Text
-                          style={[
-                            styles.storeItemName,
-                            selected && { color: colors.primary },
-                          ]}
-                        >
-                          {s.name}
-                        </Text>
-                        <Text style={styles.storeItemMeta}>
-                          🔥 버닝 · {s.category} · +{s.reward}PB
-                        </Text>
-                      </View>
-                      {selected && (
-                        <Ionicons
-                          name="checkmark-circle"
-                          size={22}
-                          color={colors.primary}
-                        />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })
-              ) : (
-                <View style={styles.emptyBox}>
-                  <Text style={styles.emptyText}>검색 결과가 없어요</Text>
-                </View>
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      )}
-
-      <ScrollView
-        style={styles.modalScroll}
-        contentContainerStyle={styles.formScroll}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.centerWrap}>
-          <View style={styles.topBarInline}>
+  if (stage === 'prep') {
+    return (
+      <BlurBackdrop onPress={onBack}>
+        <View style={styles.popupCard}>
+          <StatusBar style="dark" />
+          <View style={styles.topBar}>
             <Text style={styles.topBarTitle}>리뷰 인증</Text>
             <CloseButton onPress={onBack} />
           </View>
 
-          {/* hero */}
-          <LinearGradient
-            colors={gradients.dusk}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.hero}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.heroEyebrow}>REVIEW → REWARD</Text>
-              <Text style={styles.heroTitle}>
-                리뷰 남기고{'\n'}PB 적립하기
-              </Text>
-            </View>
-            <View style={styles.heroCoin}>
-              <Text style={styles.heroCoinText}>💎</Text>
-            </View>
-          </LinearGradient>
+          <ScrollView style={styles.modalScroll} contentContainerStyle={styles.introScroll}>
+            <View style={[styles.introCard, { width: INTRO_W }]}>
+              <LinearGradient
+                colors={gradients.dusk}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.prepHero}
+              >
+                <Text style={styles.prepHeroTag}>STEP 1 / 2</Text>
+                <Text style={styles.prepHeroTitle}>
+                  이 코드를{'\n'}리뷰 맨 앞에 붙여주세요
+                </Text>
 
-          {/* 인증 키워드 — 핵심 안내 (X로 끌 수 있음) */}
-          {!kwHidden && (
-          <View style={styles.keywordCard}>
-            <View style={styles.keywordHead}>
-              <Text style={styles.keywordTitle}>🔑 인증 키워드</Text>
-              <View style={styles.keywordHeadRight}>
-                <View style={styles.keywordReq}>
-                  <Text style={styles.keywordReqText}>필수</Text>
+                <TouchableOpacity
+                  style={styles.codeChip}
+                  onPress={copyCode}
+                  activeOpacity={0.85}
+                  disabled={!code}
+                >
+                  <Text style={styles.codeChipText}>{code ? `${code})` : '코드 받는 중…'}</Text>
+                  {!!code && <Ionicons name="copy-outline" size={17} color={colors.primary} />}
+                </TouchableOpacity>
+
+                {!!codeErr && (
+                  <TouchableOpacity onPress={loadCode} activeOpacity={0.8}>
+                    <Text style={styles.codeErr}>{codeErr} 다시 시도 ↻</Text>
+                  </TouchableOpacity>
+                )}
+                <Text style={styles.prepHeroNote}>
+                  나에게만 발급된 일회용 코드예요. 한 번 쓰면 사라져요.
+                </Text>
+              </LinearGradient>
+
+              <View style={styles.prepSteps}>
+                <PrepStep
+                  n="1"
+                  tint={colors.primary}
+                  soft={colors.primarySoft}
+                  title="네이버에 리뷰를 써요"
+                  body={`맨 앞에 ${code ? `「${code})」` : '위 코드'}를 붙이고 평소처럼 쓰면 돼요.`}
+                />
+                <PrepStep
+                  n="2"
+                  tint={colors.grape}
+                  soft={colors.grapeSoft}
+                  title="완료 화면을 캡처해요"
+                  body="'리뷰 쓰기 완료!' 화면 그대로 찍어주세요."
+                />
+                <PrepStep
+                  n="3"
+                  tint={colors.teal}
+                  soft={colors.tealSoft}
+                  title="여기에 올리면 끝"
+                  body="매장명·별점·내용을 PEED가 읽어서 자동으로 채워요."
+                  last
+                />
+              </View>
+
+              <TouchableOpacity
+                style={styles.checkboxRow}
+                onPress={toggleDontShow}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.checkbox, dontShowAgain && styles.checkboxOn]}>
+                  {dontShowAgain && <Ionicons name="checkmark" size={14} color={colors.white} />}
                 </View>
-                <TouchableOpacity onPress={dismissKeyword} hitSlop={8} style={styles.kwClose}>
-                  <Ionicons name="close" size={16} color={colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-            </View>
-            <Text style={styles.keywordDesc}>
-              네이버·카카오·구글 리뷰 <Text style={styles.keywordBold}>맨 앞</Text>에 아래 키워드 중 하나를
-              붙여서 작성해 주세요. (둘 다 인정)
-            </Text>
-            <View style={styles.keywordChips}>
-              {KEYWORDS.map((kw) => (
-                <TouchableOpacity
-                  key={kw}
-                  style={styles.keywordChip}
-                  onPress={() => copyKeyword(kw)}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.keywordChipText}>{kw}</Text>
-                  <Ionicons name="copy-outline" size={14} color={colors.primary} />
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={styles.keywordExample}>
-              <Text style={styles.keywordExampleLabel}>예시</Text>
-              <Text style={styles.keywordExampleText}>
-                <Text style={styles.keywordBold}>PEED)</Text> 분위기 좋고 음식도 빨리 나와서 완전 만족했어요 🍶
-              </Text>
-            </View>
-          </View>
-          )}
+                <Text style={styles.checkboxLabel}>다시 보지 않기</Text>
+              </TouchableOpacity>
 
-          {/* 키워드 안내를 끈 뒤 뜨는 '다시 보지 않기' */}
-          {kwHidden && kwPrompt && (
-            <View style={styles.kwPromptBar}>
-              <Text style={styles.kwPromptText}>인증 키워드 안내를 숨겼어요.</Text>
-              <View style={styles.kwPromptActions}>
-                <TouchableOpacity onPress={neverShowKeyword} activeOpacity={0.8}>
-                  <Text style={styles.kwPromptNever}>다시 보지 않기</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setKwPrompt(false)} hitSlop={8}>
-                  <Ionicons name="close" size={16} color={colors.textTertiary} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {/* 기본 정보 */}
-          <View style={styles.card}>
-            <Badge label="기본 정보" variant="brand" />
-
-            <Text style={styles.label}>리뷰 유형</Text>
-            <View style={styles.typeRow}>
-              <TypeButton
-                active={!isBurningReview}
-                label="일반 리뷰"
-                onPress={() => {
-                  setIsBurningReview(false);
-                  setSelectedBurningStore('');
-                  setBurningStoreSearch('');
-                  setShowBurningStoreModal(false);
-                }}
-              />
-              <TypeButton
-                active={isBurningReview}
-                label="🔥 버닝 매장"
-                onPress={() => {
-                  setIsBurningReview(true);
-                  setStoreName('');
-                  setBurningStoreSearch('');
-                }}
+              <AppButton
+                label="리뷰 다 썼어요 · 캡처 올리기"
+                variant="gradient"
+                onPress={() => setStage('form')}
+                style={{ width: '100%' }}
               />
             </View>
+          </ScrollView>
+        </View>
+      </BlurBackdrop>
+    );
+  }
 
-            <Text style={styles.label}>
-              {isBurningReview ? '버닝 매장 선택' : '매장명 / 상품명'}
-            </Text>
-            {isBurningReview ? (
-              <>
-                <TouchableOpacity
-                  style={styles.selectButton}
-                  onPress={() => setShowBurningStoreModal(true)}
-                  activeOpacity={0.85}
-                >
-                  <Text
-                    style={[
-                      styles.selectPlaceholder,
-                      selectedBurningStore && styles.selectValue,
-                    ]}
-                  >
-                    {selectedBurningStore || '등록된 버닝 매장 선택하기'}
+  /* ------------------------------------------------------------ 입력 */
+
+  return (
+    <BlurBackdrop onPress={onBack}>
+      <View style={styles.popupCard}>
+        <StatusBar style="dark" />
+
+        <ScrollView
+          style={styles.modalScroll}
+          contentContainerStyle={styles.formScroll}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.centerWrap}>
+            <View style={styles.topBarInline}>
+              <Text style={styles.topBarTitle}>리뷰 인증</Text>
+              <CloseButton onPress={onBack} />
+            </View>
+
+            {/* ── 캡처 업로드 ── */}
+            <View style={styles.card}>
+              <Badge label="STEP 2 · 캡처 올리기" variant="brand" />
+
+              <TouchableOpacity
+                style={[styles.shotBox, shotImage && styles.shotBoxFilled]}
+                onPress={() => pickImage('shot')}
+                activeOpacity={0.85}
+                disabled={scanning}
+              >
+                {shotImage ? (
+                  <Image source={{ uri: shotImage }} style={styles.shotPreview} />
+                ) : (
+                  <>
+                    <View style={styles.shotIcon}>
+                      <Ionicons name="scan-outline" size={26} color={colors.primary} />
+                    </View>
+                    <Text style={styles.shotTitle}>리뷰 완료 화면 캡처 올리기</Text>
+                    <Text style={styles.shotDesc}>
+                      올리면 매장명·별점·내용이 자동으로 채워져요
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              {scanning && (
+                <View style={styles.scanBar}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.scanBarText}>캡처를 읽고 있어요…</Text>
+                </View>
+              )}
+
+              {!scanning && scanDone && !scanErr && (
+                <View style={[styles.scanBar, styles.scanBarOk]}>
+                  <Ionicons name="checkmark-circle" size={17} color={colors.success} />
+                  <Text style={[styles.scanBarText, { color: colors.success }]}>
+                    자동 입력 완료! 아래 내용만 확인해 주세요.
                   </Text>
-                  <Ionicons
-                    name="chevron-down"
-                    size={18}
-                    color={colors.textSecondary}
-                  />
-                </TouchableOpacity>
-                <Text style={styles.helper}>
-                  버닝 매장은 등록된 매장만 선택할 수 있어요
-                </Text>
-              </>
-            ) : (
-              <>
-                <TextInput
-                  style={styles.input}
-                  placeholder="예: 사케골목"
-                  placeholderTextColor={colors.textTertiary}
-                  value={storeName}
-                  onChangeText={setStoreName}
-                />
-                <Text style={styles.helper}>
-                  네이버플레이스 기준 매장명 + 지점명을 입력해 주세요
-                </Text>
-              </>
-            )}
+                </View>
+              )}
 
-            <View style={styles.row}>
-              <View style={styles.half}>
-                <Text style={styles.label}>인원</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="예: 2명"
-                  placeholderTextColor={colors.textTertiary}
-                  value={peopleCount}
-                  onChangeText={setPeopleCount}
-                />
-              </View>
-              <View style={styles.half}>
-                <Text style={styles.label}>총 금액</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="예: 42,000원"
-                  placeholderTextColor={colors.textTertiary}
-                  value={totalPrice}
-                  onChangeText={setTotalPrice}
-                />
-              </View>
+              {!!scanErr && (
+                <View style={[styles.scanBar, styles.scanBarWarn]}>
+                  <Ionicons name="alert-circle" size={17} color={colors.warning} />
+                  <Text style={[styles.scanBarText, { color: colors.textSecondary }]}>
+                    {scanErr}
+                  </Text>
+                </View>
+              )}
+
+              {warnings.map((w) => (
+                <View key={w} style={[styles.scanBar, styles.scanBarWarn]}>
+                  <Ionicons name="information-circle" size={17} color={colors.warning} />
+                  <Text style={[styles.scanBarText, { color: colors.textSecondary }]}>{w}</Text>
+                </View>
+              ))}
+
+              {!shotImage && (
+                <TouchableOpacity onPress={() => setStage('prep')} activeOpacity={0.7}>
+                  <Text style={styles.backToPrep}>← 인증 코드 다시 보기</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
-            <Text style={styles.label}>주문 메뉴</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="예: 파스타, 하이볼 2잔"
-              placeholderTextColor={colors.textTertiary}
-              value={menu}
-              onChangeText={setMenu}
-            />
+            {/* ── 확인 ── */}
+            <View style={styles.card}>
+              <Badge label="STEP 3 · 확인하기" variant="coral" />
 
-            <Text style={styles.label}>리뷰 플랫폼</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="예: 네이버 / 카카오맵 / 구글"
-              placeholderTextColor={colors.textTertiary}
-              value={platform}
-              onChangeText={setPlatform}
-            />
-          </View>
-
-          {/* 리뷰 내용 */}
-          <View style={styles.card}>
-            <Badge label="리뷰 내용" variant="coral" />
-
-            <Text style={styles.label}>만족도</Text>
-            <StarRating value={rating} onChange={setRating} />
-            <Text style={styles.helper}>별을 드래그하면 소수점(예: 4.5)까지 조절돼요</Text>
-
-            <Text style={styles.label}>리뷰 내용</Text>
-            <TextInput
-              style={[
-                styles.textarea,
-                comment.trim().length > 0 && (keywordOk ? styles.textareaOk : styles.textareaWarn),
-              ]}
-              placeholder="예: 분위기 좋고 음식이 빨리 나왔어요!"
-              placeholderTextColor={colors.textTertiary}
-              multiline
-              textAlignVertical="top"
-              value={comment}
-              onChangeText={setComment}
-            />
-            {comment.trim().length > 0 &&
-              (keywordOk ? (
-                <View style={styles.kwStatus}>
-                  <Ionicons name="checkmark-circle" size={16} color={colors.success} />
-                  <Text style={[styles.kwStatusText, { color: colors.success }]}>
-                    인증 키워드 확인됨
+              <Text style={styles.label}>매장명</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="예: 멘노아지 강남역신분당선점"
+                placeholderTextColor={colors.textTertiary}
+                value={storeName}
+                onChangeText={setStoreName}
+              />
+              {autoBurning ? (
+                <View style={styles.burnPill}>
+                  <Text style={styles.burnPillText}>
+                    🔥 버닝 매장이에요 · {autoReward}PB 적립
                   </Text>
                 </View>
               ) : (
-                <View style={styles.kwStatus}>
-                  <Ionicons name="warning" size={16} color={colors.coralDeep} />
-                  <Text style={[styles.kwStatusText, { color: colors.coralDeep }]}>
-                    리뷰 맨 앞에 「PEED)」 또는 「피드)」를 넣어주세요
-                  </Text>
-                </View>
-              ))}
+                <Text style={styles.helper}>
+                  네이버플레이스 표기 그대로면 버닝 매장이 자동으로 인식돼요
+                </Text>
+              )}
+              {!!scannedStore && scannedStore !== storeName && (
+                <Text style={styles.helper}>캡처에서 읽은 이름: {scannedStore}</Text>
+              )}
 
-            <Text style={styles.label}>태그 (선택)</Text>
-            <View style={styles.tagInputWrap}>
-              {tags.map((t) => (
-                <TouchableOpacity
-                  key={t}
-                  style={styles.tagChip}
-                  onPress={() => removeTag(t)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.tagChipText}>#{t}</Text>
-                  <Ionicons name="close" size={12} color={colors.primary} />
-                </TouchableOpacity>
-              ))}
+              <Text style={styles.label}>만족도</Text>
+              <StarRating value={rating} onChange={setRating} />
+              <Text style={styles.helper}>별을 드래그하면 소수점(예: 4.5)까지 조절돼요</Text>
+
+              <Text style={styles.label}>리뷰 내용</Text>
               <TextInput
-                style={styles.tagInput}
-                placeholder={tags.length ? '태그 추가' : '예: #홍대이자카야 (스페이스로 추가)'}
+                style={styles.textarea}
+                placeholder="예: 분위기 좋고 음식이 빨리 나왔어요!"
                 placeholderTextColor={colors.textTertiary}
-                value={tagDraft}
-                onChangeText={(v) => (/\s/.test(v) ? addTag(v) : setTagDraft(v))}
-                onSubmitEditing={() => addTag(tagDraft)}
-                blurOnSubmit={false}
-                returnKeyType="done"
+                multiline
+                textAlignVertical="top"
+                value={comment}
+                onChangeText={setComment}
               />
-            </View>
-            {suggestedTags.length > 0 && (
-              <View style={styles.tagSuggest}>
-                <Text style={styles.tagSuggestLabel}>추천</Text>
-                {suggestedTags.map((t) => (
+              <Text style={styles.helper}>
+                캡처에서 읽은 내용이에요. 글자가 깨졌으면 고쳐주세요.
+              </Text>
+
+              <Text style={styles.label}>태그 (선택)</Text>
+              <View style={styles.tagInputWrap}>
+                {tags.map((t) => (
                   <TouchableOpacity
                     key={t}
-                    style={styles.tagSuggestChip}
-                    onPress={() => addTag(t)}
+                    style={styles.tagChip}
+                    onPress={() => removeTag(t)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.tagSuggestText}>#{t}</Text>
-                    <Ionicons name="add" size={12} color={colors.textSecondary} />
+                    <Text style={styles.tagChipText}>#{t}</Text>
+                    <Ionicons name="close" size={12} color={colors.primary} />
                   </TouchableOpacity>
                 ))}
+                <TextInput
+                  style={styles.tagInput}
+                  placeholder={tags.length ? '태그 추가' : '예: #홍대이자카야 (스페이스로 추가)'}
+                  placeholderTextColor={colors.textTertiary}
+                  value={tagDraft}
+                  onChangeText={(v) => (/\s/.test(v) ? addTag(v) : setTagDraft(v))}
+                  onSubmitEditing={() => addTag(tagDraft)}
+                  blurOnSubmit={false}
+                  returnKeyType="done"
+                />
               </View>
-            )}
-          </View>
-
-          {/* 공개 설정 */}
-          <View style={styles.card}>
-            <Badge label="공개 설정" variant="brand" />
-            <View style={styles.visRow}>
-              <TouchableOpacity
-                style={[styles.visBtn, isPublic && styles.visBtnOn]}
-                onPress={() => setIsPublic(true)}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="earth" size={18} color={isPublic ? colors.primary : colors.textSecondary} />
-                <Text style={[styles.visBtnText, isPublic && styles.visBtnTextOn]}>공개</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.visBtn, !isPublic && styles.visBtnOn]}
-                onPress={() => setIsPublic(false)}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="lock-closed" size={18} color={!isPublic ? colors.primary : colors.textSecondary} />
-                <Text style={[styles.visBtnText, !isPublic && styles.visBtnTextOn]}>비공개</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.helper}>
-              {isPublic
-                ? '공개 — 홈 피드에 노출되고 다른 사람도 볼 수 있어요.'
-                : '비공개 — 홈 피드엔 안 보이고 내 프로필에서만 볼 수 있어요.'}
-            </Text>
-          </View>
-
-          {/* 인증 사진 */}
-          <View style={styles.card}>
-            <Badge label="인증 사진" variant="lime" />
-
-            <Text style={styles.label}>영수증 · 리뷰 스크린샷 (필수)</Text>
-            <TouchableOpacity
-              style={styles.uploadBox}
-              onPress={() => pickImage('receipt')}
-              activeOpacity={0.85}
-            >
-              {receiptImage ? (
-                <Image source={{ uri: receiptImage }} style={styles.previewImage} />
-              ) : (
-                <>
-                  <Ionicons name="receipt-outline" size={30} color={colors.primary} />
-                  <Text style={styles.uploadTitle}>영수증/리뷰 사진 올리기</Text>
-                  <Text style={styles.uploadDesc}>1장 업로드</Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            <Text style={styles.label}>이용 사진 (피드 게시용)</Text>
-            <TouchableOpacity
-              style={styles.uploadBox}
-              onPress={() => pickImage('photos')}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="images-outline" size={30} color={colors.primary} />
-              <Text style={styles.uploadTitle}>이용 사진 올리기</Text>
-              <Text style={styles.uploadDesc}>최대 5장</Text>
-              {photos.length > 0 && (
-                <View style={styles.previewRow}>
-                  {photos.map((uri, i) => (
-                    <Image key={i} source={{ uri }} style={styles.smallPreview} />
+              {suggestedTags.length > 0 && (
+                <View style={styles.tagSuggest}>
+                  <Text style={styles.tagSuggestLabel}>추천</Text>
+                  {suggestedTags.map((t) => (
+                    <TouchableOpacity
+                      key={t}
+                      style={styles.tagSuggestChip}
+                      onPress={() => addTag(t)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.tagSuggestText}>#{t}</Text>
+                      <Ionicons name="add" size={12} color={colors.textSecondary} />
+                    </TouchableOpacity>
                   ))}
                 </View>
               )}
-            </TouchableOpacity>
-            <View style={styles.feedNotice}>
-              <Ionicons
-                name={photos.length > 0 ? 'checkmark-circle' : 'information-circle'}
-                size={15}
-                color={photos.length > 0 ? colors.success : colors.textTertiary}
-              />
-              <Text style={styles.feedNoticeText}>
-                {photos.length > 0
-                  ? '리뷰 인증과 함께 내 피드에 게시돼요.'
-                  : '사진을 올리지 않으면 인증·PB 적립만 되고 피드엔 게시되지 않아요.'}
+
+              {/* 선택 정보 — 접어 둔다 */}
+              <TouchableOpacity
+                style={styles.extraToggle}
+                onPress={() => setExtraOpen((v) => !v)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.extraToggleText}>
+                  인원 · 금액 · 메뉴 적기 (선택)
+                </Text>
+                <Ionicons
+                  name={extraOpen ? 'chevron-up' : 'chevron-down'}
+                  size={16}
+                  color={colors.textSecondary}
+                />
+              </TouchableOpacity>
+              {extraOpen && (
+                <View>
+                  <View style={styles.row}>
+                    <View style={styles.half}>
+                      <Text style={styles.label}>인원</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="예: 2명"
+                        placeholderTextColor={colors.textTertiary}
+                        value={peopleCount}
+                        onChangeText={setPeopleCount}
+                      />
+                    </View>
+                    <View style={styles.half}>
+                      <Text style={styles.label}>총 금액</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="예: 42,000원"
+                        placeholderTextColor={colors.textTertiary}
+                        value={totalPrice}
+                        onChangeText={setTotalPrice}
+                      />
+                    </View>
+                  </View>
+                  <Text style={styles.label}>주문 메뉴</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="예: 파스타, 하이볼 2잔"
+                    placeholderTextColor={colors.textTertiary}
+                    value={menu}
+                    onChangeText={setMenu}
+                  />
+                </View>
+              )}
+            </View>
+
+            {/* ── 이용 사진 ── */}
+            <View style={styles.card}>
+              <Badge label="이용 사진 (선택)" variant="lime" />
+              <TouchableOpacity
+                style={styles.uploadBox}
+                onPress={() => pickImage('photos')}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="images-outline" size={28} color={colors.tangerine} />
+                <Text style={styles.uploadTitle}>이용 사진 올리기</Text>
+                <Text style={styles.uploadDesc}>최대 5장</Text>
+                {photos.length > 0 && (
+                  <View style={styles.previewRow}>
+                    {photos.map((uri, i) => (
+                      <Image key={i} source={{ uri }} style={styles.smallPreview} />
+                    ))}
+                  </View>
+                )}
+              </TouchableOpacity>
+              <View style={styles.feedNotice}>
+                <Ionicons
+                  name={photos.length > 0 ? 'checkmark-circle' : 'information-circle'}
+                  size={15}
+                  color={photos.length > 0 ? colors.success : colors.textTertiary}
+                />
+                <Text style={styles.feedNoticeText}>
+                  {photos.length > 0
+                    ? '홈 피드와 내 프로필에 모두 게시돼요.'
+                    : '사진이 없어도 게시돼요. 다만 홈 피드엔 안 뜨고 내 프로필에서만 보여요.'}
+                </Text>
+              </View>
+            </View>
+
+            {/* ── 공개 설정 ── */}
+            <View style={styles.card}>
+              <Badge label="공개 설정" variant="brand" />
+              <View style={styles.visRow}>
+                <TouchableOpacity
+                  style={[styles.visBtn, isPublic && styles.visBtnOn]}
+                  onPress={() => setIsPublic(true)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons
+                    name="earth"
+                    size={18}
+                    color={isPublic ? colors.primary : colors.textSecondary}
+                  />
+                  <Text style={[styles.visBtnText, isPublic && styles.visBtnTextOn]}>공개</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.visBtn, !isPublic && styles.visBtnOn]}
+                  onPress={() => setIsPublic(false)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons
+                    name="lock-closed"
+                    size={18}
+                    color={!isPublic ? colors.primary : colors.textSecondary}
+                  />
+                  <Text style={[styles.visBtnText, !isPublic && styles.visBtnTextOn]}>비공개</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.helper}>
+                {isPublic
+                  ? photos.length > 0
+                    ? '공개 — 홈 피드에 뜨고, 내 프로필에 놀러 온 사람도 볼 수 있어요.'
+                    : '공개 — 홈 피드엔 안 뜨지만, 내 프로필에 놀러 온 사람은 볼 수 있어요.'
+                  : '비공개 — 사진이 있어도 홈에도 안 뜨고, 내 프로필에 놀러 와도 남에겐 안 보여요.'}
               </Text>
             </View>
-          </View>
 
-          <View style={styles.bottomRow}>
-            <AppButton
-              label="뒤로가기"
-              variant="ghost"
-              onPress={onBack}
-              style={{ flex: 1 }}
-            />
-            <AppButton
-              label="작성 완료"
-              variant="gradient"
-              disabled={!isFormValid}
-              onPress={handleSubmit}
-              style={{ flex: 1.6 }}
-            />
-          </View>
+            <View style={styles.bottomRow}>
+              <AppButton
+                label="뒤로"
+                variant="ghost"
+                onPress={onBack}
+                style={{ flex: 1 }}
+              />
+              <AppButton
+                label="작성 완료"
+                variant="gradient"
+                disabled={!isFormValid}
+                onPress={handleSubmit}
+                style={{ flex: 1.8 }}
+              />
+            </View>
 
-          <View style={{ height: 40 }} />
-        </View>
-      </ScrollView>
+            <View style={{ height: 40 }} />
+          </View>
+        </ScrollView>
       </View>
     </BlurBackdrop>
   );
@@ -1049,25 +885,34 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
 
 /* ------------------------------------------------------------- sub-parts */
 
-function TypeButton({
-  active,
-  label,
-  onPress,
+function PrepStep({
+  n,
+  title,
+  body,
+  tint,
+  soft,
+  last,
 }: {
-  active: boolean;
-  label: string;
-  onPress: () => void;
+  n: string;
+  title: string;
+  body: string;
+  tint: string;
+  soft: string;
+  last?: boolean;
 }) {
   return (
-    <TouchableOpacity
-      style={[styles.typeButton, active && styles.typeButtonOn]}
-      onPress={onPress}
-      activeOpacity={0.85}
-    >
-      <Text style={[styles.typeButtonText, active && styles.typeButtonTextOn]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
+    <View style={styles.prepStepRow}>
+      <View style={styles.prepRail}>
+        <View style={[styles.prepNum, { backgroundColor: soft }]}>
+          <Text style={[styles.prepNumText, { color: tint }]}>{n}</Text>
+        </View>
+        {!last && <View style={styles.prepLine} />}
+      </View>
+      <View style={styles.prepStepBody}>
+        <Text style={styles.prepStepTitle}>{title}</Text>
+        <Text style={styles.prepStepText}>{body}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -1088,6 +933,23 @@ function InfoLine({
   );
 }
 
+/** 웹에서 blob/file URI 를 data URL 로 — 판독 요청에 실어 보내려면 필요하다. */
+async function uriToDataUrl(uri: string): Promise<string> {
+  try {
+    if (uri.startsWith('data:')) return uri;
+    const res = await fetch(uri);
+    const blob = await res.blob();
+    return await new Promise((resolve) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ''));
+      fr.onerror = () => resolve('');
+      fr.readAsDataURL(blob);
+    });
+  } catch {
+    return '';
+  }
+}
+
 /* ----------------------------------------------------------------- styles */
 
 const styles = StyleSheet.create({
@@ -1099,338 +961,289 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     ...({ boxShadow: '0 24px 70px rgba(0,0,0,0.35)' } as object),
   },
-  modalScroll: {
-    flexGrow: 0,
-    flexShrink: 1,
-    width: '100%',
-    maxHeight: MODAL_MAX_H,
-  },
-  centerScroll: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexGrow: 1,
-    padding: spacing.lg,
-  },
-  formScroll: {
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-  },
-  centerWrap: {
-    width: CONTENT_W,
-    gap: spacing.lg,
-  },
+  modalScroll: { flexGrow: 0 },
+  centerScroll: { padding: spacing.lg },
+  formScroll: { padding: spacing.lg },
+  centerWrap: { width: '100%' },
 
-  /* top bar */
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xs,
   },
   topBarInline: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: spacing.sm,
+    marginBottom: spacing.md,
   },
-  topBarTitle: {
-    ...type.h2,
-    color: colors.textPrimary,
-  },
+  topBarTitle: { fontSize: 17, fontWeight: '800', color: colors.textPrimary },
   closeBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.surfaceAlt,
+    width: 32,
+    height: 32,
+    borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: colors.surfaceAlt,
   },
 
-  /* intro */
-  introScroll: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexGrow: 1,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing['2xl'],
-  },
-  introCard: {
-    backgroundColor: colors.card,
-    borderRadius: radius['2xl'],
-    padding: spacing.xl,
-    ...shadow.card,
-  },
-  dotsRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  dot: {
-    flex: 1,
-    height: 6,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceAlt,
-  },
-  dotActive: {
-    backgroundColor: colors.primary,
-  },
-  introHero: {
-    height: 168,
+  introScroll: { padding: spacing.lg, alignItems: 'center' },
+  introCard: { alignItems: 'stretch' },
+
+  /* ---- 준비 화면 ---- */
+  prepHero: {
     borderRadius: radius.xl,
+    padding: spacing.xl,
+    marginBottom: spacing.lg,
+  },
+  prepHeroTag: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    marginBottom: spacing.sm,
+  },
+  prepHeroTitle: {
+    color: colors.white,
+    fontSize: 23,
+    lineHeight: 32,
+    fontWeight: '900',
+    marginBottom: spacing.lg,
+  },
+  codeChip: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
-    marginBottom: spacing.xl,
+    backgroundColor: colors.white,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
   },
-  introStepTag: {
-    ...type.badge,
-    color: 'rgba(255,255,255,0.9)',
-    letterSpacing: 1,
-  },
-  introEmoji: {
-    fontSize: 64,
-  },
-  introStepTitle: {
-    ...type.h1,
-    color: colors.textPrimary,
-    marginBottom: spacing.lg,
-  },
-  tipBox: {
-    backgroundColor: colors.primarySoft,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-  },
-  tipText: {
-    ...type.body,
-    color: colors.textSecondary,
-  },
-  tipStrong: {
+  codeChipText: {
+    fontSize: 20,
+    fontWeight: '900',
+    letterSpacing: 1.5,
     color: colors.primary,
-    fontWeight: '800',
   },
-  warningBox: {
+  codeErr: {
+    color: colors.lime,
+    fontSize: 12.5,
+    fontWeight: '700',
+    marginTop: spacing.sm,
+    textAlign: 'center',
+  },
+  prepHeroNote: {
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 12.5,
+    lineHeight: 19,
     marginTop: spacing.md,
-    backgroundColor: colors.coralSoft,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
+    textAlign: 'center',
   },
-  warningText: {
-    ...type.body,
-    color: colors.coralDeep,
-    fontWeight: '600',
+
+  prepSteps: { marginBottom: spacing.md },
+  prepStepRow: { flexDirection: 'row', gap: spacing.md },
+  prepRail: { alignItems: 'center', width: 32 },
+  prepNum: {
+    width: 32,
+    height: 32,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  prepNumText: { fontSize: 14, fontWeight: '900' },
+  prepLine: {
+    flex: 1,
+    width: 2,
+    backgroundColor: colors.line,
+    marginVertical: 3,
+    borderRadius: 2,
+  },
+  prepStepBody: { flex: 1, paddingBottom: spacing.lg },
+  prepStepTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginBottom: 3,
+  },
+  prepStepText: { fontSize: 13, lineHeight: 20, color: colors.textSecondary },
+
   checkboxRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: spacing.md,
     gap: spacing.sm,
+    paddingVertical: spacing.md,
   },
   checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 7,
+    width: 20,
+    height: 20,
+    borderRadius: 6,
     borderWidth: 1.5,
     borderColor: colors.lineStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  checkboxLabel: { fontSize: 13.5, fontWeight: '600', color: colors.textSecondary },
+
+  /* ---- 카드 ---- */
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    ...shadow.soft,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  helper: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.textTertiary,
+    marginTop: 6,
+  },
+  input: {
+    height: 48,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingHorizontal: spacing.md,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  textarea: {
+    minHeight: 110,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.line,
+    padding: spacing.md,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '500',
+    color: colors.textPrimary,
+  },
+  row: { flexDirection: 'row', gap: spacing.md },
+  half: { flex: 1 },
+
+  extraToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.xl,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
+  extraToggleText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+
+  /* ---- 캡처 ---- */
+  shotBox: {
+    marginTop: spacing.lg,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+    paddingVertical: spacing['2xl'],
+    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+    gap: 6,
+  },
+  shotBoxFilled: {
+    paddingVertical: spacing.md,
+    borderStyle: 'solid',
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+  },
+  shotIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 999,
     backgroundColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 4,
   },
-  checkboxOn: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  checkboxLabel: {
-    ...type.label,
+  shotTitle: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+  shotDesc: {
+    fontSize: 12.5,
     color: colors.textSecondary,
+    textAlign: 'center',
   },
-  introButtons: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    marginTop: spacing.xl,
+  shotPreview: {
+    width: '100%',
+    height: 220,
+    borderRadius: radius.md,
+    resizeMode: 'contain',
   },
-
-  /* form */
-  hero: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: radius.xl,
-    padding: spacing.xl,
-  },
-  heroEyebrow: {
-    ...type.badge,
-    color: 'rgba(255,255,255,0.85)',
-    letterSpacing: 1.2,
-    marginBottom: spacing.sm,
-  },
-  heroTitle: {
-    ...type.h1,
-    color: colors.white,
-  },
-  heroCoin: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroCoinText: {
-    fontSize: 30,
-  },
-
-  /* 인증 키워드 카드 */
-  keywordCard: {
-    backgroundColor: colors.primarySoft,
-    borderRadius: radius.xl,
-    padding: spacing.lg,
-    gap: spacing.md,
-    borderWidth: 1.5,
-    borderColor: colors.primary,
-  },
-  keywordHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  keywordHeadRight: {
+  scanBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-  },
-  kwClose: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  keywordTitle: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: colors.primary,
-  },
-  kwPromptBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surfaceAlt,
+    marginTop: spacing.md,
+    padding: spacing.md,
     borderRadius: radius.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    backgroundColor: colors.surface,
   },
-  kwPromptText: {
+  scanBarOk: { backgroundColor: '#E8F8EF' },
+  scanBarWarn: { backgroundColor: colors.tangerineSoft },
+  scanBarText: {
+    flex: 1,
+    fontSize: 12.5,
+    lineHeight: 19,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  backToPrep: {
+    marginTop: spacing.md,
     fontSize: 13,
     fontWeight: '700',
-    color: colors.textSecondary,
-    flexShrink: 1,
-  },
-  kwPromptActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  kwPromptNever: {
-    fontSize: 13,
-    fontWeight: '800',
     color: colors.primary,
-  },
-  keywordReq: {
-    backgroundColor: colors.coral,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-  },
-  keywordReqText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: colors.white,
-  },
-  keywordDesc: {
-    fontSize: 13.5,
-    lineHeight: 20,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  keywordBold: {
-    color: colors.primary,
-    fontWeight: '900',
-  },
-  keywordChips: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  keywordChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.card,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: colors.primary,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  keywordChipText: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: colors.primary,
-    letterSpacing: 0.3,
-  },
-  keywordExample: {
-    backgroundColor: colors.card,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    gap: 4,
-  },
-  keywordExampleLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: colors.textTertiary,
-    letterSpacing: 0.5,
-  },
-  keywordExampleText: {
-    fontSize: 13.5,
-    lineHeight: 20,
-    color: colors.textPrimary,
-    fontWeight: '600',
+    textAlign: 'center',
   },
 
-  /* 리뷰 내용 검증 상태 */
-  textareaOk: {
-    borderColor: colors.success,
-    backgroundColor: '#F1FBF4',
-  },
-  textareaWarn: {
-    borderColor: colors.coral,
+  burnPill: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.sm,
     backgroundColor: colors.coralSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 7,
   },
-  kwStatus: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginTop: -spacing.xs,
-  },
-  kwStatusText: {
-    fontSize: 12.5,
-    fontWeight: '800',
-  },
+  burnPillText: { fontSize: 12.5, fontWeight: '800', color: colors.coralDeep },
 
-  /* 태그 입력 */
+  /* ---- 별점 ---- */
+  starRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  starTrack: { flexDirection: 'row', gap: 6 },
+  starCell: { width: STAR_SIZE, height: STAR_SIZE },
+  starFill: { position: 'absolute', left: 0, top: 0, overflow: 'hidden' },
+  starLabel: { fontSize: 18, fontWeight: '900', color: colors.tangerine },
+
+  /* ---- 태그 ---- */
   tagInputWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
-    gap: spacing.sm,
-    minHeight: 52,
+    gap: 6,
+    minHeight: 48,
     borderRadius: radius.md,
+    backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.line,
-    backgroundColor: colors.surface,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: 8,
   },
   tagChip: {
     flexDirection: 'row',
@@ -1438,421 +1251,178 @@ const styles = StyleSheet.create({
     gap: 4,
     backgroundColor: colors.primarySoft,
     borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
   },
-  tagChipText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: colors.primary,
-  },
+  tagChipText: { fontSize: 12.5, fontWeight: '800', color: colors.primary },
   tagInput: {
     flex: 1,
-    minWidth: 120,
-    height: 34,
-    color: colors.textPrimary,
+    minWidth: 110,
     fontSize: 14,
-    ...({ outlineStyle: 'none' } as object),
+    fontWeight: '600',
+    color: colors.textPrimary,
   },
   tagSuggest: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: -spacing.xs,
+    gap: 6,
+    marginTop: spacing.sm,
   },
-  tagSuggestLabel: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: colors.textTertiary,
-  },
+  tagSuggestLabel: { fontSize: 11.5, fontWeight: '800', color: colors.textTertiary },
   tagSuggestChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
     backgroundColor: colors.surfaceAlt,
     borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
   },
-  tagSuggestText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: colors.textSecondary,
-  },
+  tagSuggestText: { fontSize: 12, fontWeight: '700', color: colors.textSecondary },
 
-  card: {
-    backgroundColor: colors.card,
-    borderRadius: radius.xl,
-    padding: spacing.lg,
-    gap: spacing.md,
-    ...shadow.soft,
-  },
-  label: {
-    ...type.label,
-    color: colors.textPrimary,
-    marginTop: spacing.xs,
-  },
-  helper: {
-    ...type.caption,
-    color: colors.textTertiary,
-    fontWeight: '600',
-    marginTop: -spacing.xs,
-  },
-  input: {
-    height: 52,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.surface,
-    paddingHorizontal: spacing.lg,
-    color: colors.textPrimary,
-    fontSize: 15,
-    ...({ outlineStyle: 'none' } as object),
-  },
-  textarea: {
-    minHeight: 110,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.surface,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    color: colors.textPrimary,
-    fontSize: 15,
-    ...({ outlineStyle: 'none' } as object),
-  },
-  row: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  half: {
-    flex: 1,
-    gap: spacing.md,
-  },
-
-  typeRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  typeButton: {
-    flex: 1,
-    height: 50,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: colors.line,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  typeButtonOn: {
-    backgroundColor: colors.primarySoft,
-    borderColor: colors.primary,
-  },
-  typeButtonText: {
-    ...type.label,
-    color: colors.textSecondary,
-  },
-  typeButtonTextOn: {
-    color: colors.primary,
-  },
-  visRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  visBtn: {
-    flex: 1,
-    height: 50,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: colors.line,
-    backgroundColor: colors.surface,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  visBtnOn: {
-    backgroundColor: colors.primarySoft,
-    borderColor: colors.primary,
-  },
-  visBtnText: {
-    ...type.label,
-    color: colors.textSecondary,
-  },
-  visBtnTextOn: {
-    color: colors.primary,
-  },
-
-  selectButton: {
-    height: 52,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: colors.surface,
-    paddingHorizontal: spacing.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  selectPlaceholder: {
-    color: colors.textTertiary,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  selectValue: {
-    color: colors.textPrimary,
-    fontWeight: '800',
-  },
-
-  starRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-  },
-  starTrack: {
-    flexDirection: 'row',
-    gap: STAR_GAP,
-    paddingVertical: 4,
-    ...({ cursor: 'pointer', touchAction: 'none' } as object),
-  },
-  starCell: {
-    width: STAR_SIZE,
-    height: STAR_SIZE,
-  },
-  starFill: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    height: STAR_SIZE,
-    overflow: 'hidden',
-  },
-  starLabel: {
-    ...type.title,
-    color: colors.coral,
-    marginLeft: spacing.md,
-  },
-
+  /* ---- 이용 사진 ---- */
   uploadBox: {
+    marginTop: spacing.lg,
     borderRadius: radius.lg,
     borderWidth: 1.5,
-    borderColor: colors.primary,
     borderStyle: 'dashed',
-    backgroundColor: colors.primarySoft,
-    paddingVertical: spacing['2xl'],
+    borderColor: colors.lineStrong,
+    backgroundColor: colors.surface,
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.lg,
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
+    gap: 4,
   },
-  uploadTitle: {
-    ...type.label,
-    color: colors.textPrimary,
-    fontSize: 15,
-  },
-  uploadDesc: {
-    ...type.caption,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  previewImage: {
-    width: '100%',
-    height: 170,
-    borderRadius: radius.md,
-  },
+  uploadTitle: { fontSize: 14.5, fontWeight: '800', color: colors.textPrimary },
+  uploadDesc: { fontSize: 12, color: colors.textTertiary },
   previewRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    gap: 6,
+    marginTop: spacing.md,
     justifyContent: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.sm,
   },
-  smallPreview: {
-    width: 58,
-    height: 58,
-    borderRadius: radius.sm,
-  },
-
+  smallPreview: { width: 52, height: 52, borderRadius: radius.sm },
   feedNotice: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 6,
-    marginTop: -spacing.xs,
+    marginTop: spacing.md,
   },
   feedNoticeText: {
     flex: 1,
-    ...type.caption,
-    color: colors.textTertiary,
-    fontWeight: '600',
-    lineHeight: 17,
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.textSecondary,
   },
 
-  bottomRow: {
+  /* ---- 공개 설정 ---- */
+  visRow: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.lg },
+  visBtn: {
+    flex: 1,
     flexDirection: 'row',
-    gap: spacing.md,
-  },
-
-  /* burning modal */
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: colors.overlay,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-    zIndex: 30,
-  },
-  modalCard: {
-    backgroundColor: colors.card,
-    borderRadius: radius.xl,
-    padding: spacing.lg,
-    maxHeight: '80%',
-    ...shadow.lifted,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  modalTitle: {
-    ...type.title,
-    color: colors.textPrimary,
-  },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
+    gap: 6,
     height: 48,
     borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.line,
-    paddingHorizontal: spacing.lg,
-    marginBottom: spacing.md,
-  },
-  searchInput: {
-    flex: 1,
-    color: colors.textPrimary,
-    fontSize: 15,
-    ...({ outlineStyle: 'none' } as object),
-  },
-  storeItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: colors.line,
     backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.sm,
   },
-  storeItemOn: {
-    backgroundColor: colors.primarySoft,
-    borderColor: colors.primary,
-  },
-  storeItemName: {
-    ...type.label,
-    color: colors.textPrimary,
-    fontSize: 15,
-    marginBottom: 2,
-  },
-  storeItemMeta: {
-    ...type.caption,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  emptyBox: {
-    paddingVertical: spacing['3xl'],
-    alignItems: 'center',
-  },
-  emptyText: {
-    ...type.body,
-    color: colors.textSecondary,
-  },
+  visBtnOn: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  visBtnText: { fontSize: 14.5, fontWeight: '800', color: colors.textSecondary },
+  visBtnTextOn: { color: colors.primary },
 
-  /* success */
+  bottomRow: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.sm },
+
+  /* ---- 완료 ---- */
   successCoin: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 88,
+    height: 88,
+    borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.xl,
-    ...shadow.card,
+    marginBottom: spacing.lg,
   },
-  successCoinText: {
-    fontSize: 48,
-  },
+  successCoinText: { fontSize: 40 },
   successTitle: {
-    ...type.h1,
+    fontSize: 24,
+    fontWeight: '900',
     color: colors.textPrimary,
-    textAlign: 'center',
     marginBottom: spacing.md,
   },
   successRewardPill: {
     backgroundColor: colors.limeSoft,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.sm,
-    marginBottom: spacing.sm,
+    paddingVertical: 9,
   },
-  successRewardText: {
-    ...type.title,
-    color: colors.limeInk,
-  },
+  successRewardText: { fontSize: 16, fontWeight: '900', color: colors.limeInk },
   successCurrentPb: {
-    ...type.label,
+    fontSize: 13,
+    fontWeight: '700',
     color: colors.textSecondary,
-    marginBottom: spacing.md,
+    marginTop: spacing.sm,
   },
-  successStampBadge: {
+  burnBanner: {
+    marginTop: spacing.lg,
     backgroundColor: colors.coralSoft,
-    borderRadius: radius.pill,
+    borderRadius: radius.md,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    marginBottom: spacing.md,
+    paddingVertical: spacing.md,
+    width: '100%',
   },
-  successStampText: {
-    ...type.label,
+  burnBannerText: {
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '700',
     color: colors.coralDeep,
     textAlign: 'center',
   },
+  successStampBadge: {
+    marginTop: spacing.lg,
+    backgroundColor: colors.tealSoft,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    width: '100%',
+  },
+  successStampText: {
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: colors.teal,
+    textAlign: 'center',
+  },
   successDesc: {
-    ...type.body,
+    fontSize: 13.5,
+    lineHeight: 21,
     color: colors.textSecondary,
     textAlign: 'center',
-    marginBottom: spacing.xl,
+    marginTop: spacing.lg,
+    marginBottom: spacing.lg,
   },
   successInfoCard: {
     width: '100%',
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     paddingHorizontal: spacing.lg,
-    marginBottom: spacing.xl,
+    marginBottom: spacing.lg,
     ...shadow.soft,
   },
   infoLine: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: spacing.lg,
-    gap: spacing.md,
+    justifyContent: 'space-between',
+    paddingVertical: spacing.md,
   },
-  infoLineBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.line,
-  },
-  infoLabel: {
-    ...type.label,
-    color: colors.textSecondary,
-  },
+  infoLineBorder: { borderBottomWidth: 1, borderBottomColor: colors.line },
+  infoLabel: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
   infoValue: {
-    ...type.label,
+    fontSize: 13.5,
+    fontWeight: '800',
     color: colors.textPrimary,
     flexShrink: 1,
     textAlign: 'right',

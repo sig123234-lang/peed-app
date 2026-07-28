@@ -3,7 +3,7 @@ import { Image } from 'expo-image';
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { initialAvatar, STAMP_BOARD, useFeed } from '@/context/feed';
+import { initialAvatar, useFeed } from '@/context/feed';
 import { usePb } from '@/context/pb';
 import { useReservations } from '@/context/reservations';
 import { useShell } from '@/context/shell';
@@ -14,12 +14,12 @@ const comma = (n: number) => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
 // Desktop-only right rail — the widgets column (Twitter/Instagram desktop style).
 export function RightRail() {
-  const { me, toggleFollow, stamps } = useFeed();
+  const { me, toggleFollow, passport, passportGoal } = useFeed();
   const { pb } = usePb();
   const { setTab, setShowReview, openStoreDetail, viewUser } = useShell();
   const { openReserve } = useReservations();
 
-  const doneStamps = STAMP_BOARD.filter((n) => stamps.includes(n)).length;
+  const doneStamps = passport.stores.length;
 
   // 지금 뜨는 경품 = 서버의 실제 활성 경품 첫 항목(없으면 카드 숨김).
   const [hotPrize, setHotPrize] = useState<
@@ -85,7 +85,7 @@ export function RightRail() {
           </View>
           <View style={[styles.statPill, styles.statStamp]}>
             <Text style={styles.statStampText}>
-              🔴 도장 {doneStamps}/{STAMP_BOARD.length}
+              🔴 도장 {doneStamps}/{passportGoal}
             </Text>
           </View>
         </View>
