@@ -26,10 +26,8 @@ export function BitesTray() {
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>
-        Bites <Text style={styles.labelEmoji}>🍽</Text>
-      </Text>
-
+      {/* 예전엔 위에 'Bites 🍽' 제목을 달았는데, 칸 자체가 무엇인지 이미
+          말해주고 있어서 글자와 이모지를 걷어냈다. */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -158,17 +156,6 @@ const styles = StyleSheet.create({
   wrap: {
     marginBottom: spacing.lg,
   },
-  label: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: colors.textPrimary,
-    letterSpacing: 0.3,
-    marginBottom: spacing.sm,
-  },
-  labelEmoji: {
-    fontSize: 14,
-  },
-
   tray: {
     marginHorizontal: -spacing.lg, // bleed to screen edges
   },
