@@ -4,6 +4,7 @@ import {
   FlatList,
   Image,
   Modal,
+  Platform,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -26,6 +27,18 @@ const SIDE = 30; // 양옆 여백 (peek)
 const GAP = 12; // 카드 사이 간격
 const CARD_WIDTH = width - SIDE * 2;
 const SNAP = CARD_WIDTH + GAP;
+
+// 웹에서는 스냅을 CSS 로 직접 건다.
+//
+// react-native-web 의 ScrollView 는 snapToInterval / snapToAlignment 를 아예
+// 구현하지 않는다 — pagingEnabled 일 때만 scroll-snap 을 걸어준다. 그래서 웹에선
+// 스냅이 없는 자유 스크롤이 되고, 손을 뗀 자리에 그대로 멈춰 두 번째 카드부터
+// 어중간하게 왼쪽에 걸쳐 보였다(첫 카드는 시작 위치가 0 이라 우연히 맞았다).
+//
+// scroll-snap-align: center 는 카드의 중심을 스크롤 영역의 중심에 맞추므로
+// 몇 번째 카드든 항상 가운데에 선다. 네이티브는 기존 snapToInterval 이 처리한다.
+const webSnapList = Platform.OS === 'web' ? ({ scrollSnapType: 'x mandatory' } as object) : null;
+const webSnapCard = Platform.OS === 'web' ? ({ scrollSnapAlign: 'center' } as object) : null;
 
 const DEFAULT_PRIZE_IMG = {
   uri: 'https://images.unsplash.com/photo-1607082349566-187342175e2f?w=800&q=80&auto=format&fit=crop',
@@ -219,7 +232,7 @@ export default function PeedScreen({ embedded = false }: { embedded?: boolean })
             </View>
           </GradientHeader>
 
-          <View style={[styles.prizeImageWrap, { height: cardImageHeight }]}>
+          <View style={[styles.prizeImageWrap, { minHeight: cardImageHeight }]}>
             <Image
               source={item.image}
               style={styles.prizeImage}
@@ -323,11 +336,11 @@ export default function PeedScreen({ embedded = false }: { embedded?: boolean })
           ) : (
             <FlatList
               ref={flatListRef}
-              style={{ flex: 1 }}
+              style={[{ flex: 1 }, webSnapList]}
               data={prizes}
               keyExtractor={(item) => item.id}
               renderItem={({ item }) => (
-                <View style={styles.slideCard}>{renderCardBody(item)}</View>
+                <View style={[styles.slideCard, webSnapCard]}>{renderCardBody(item)}</View>
               )}
               horizontal
               snapToInterval={SNAP}
@@ -527,14 +540,20 @@ const styles = StyleSheet.create({
   sliderContent: {
     paddingHorizontal: SIDE,
     paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
 
+  // 카드를 세로로 꽉 채운다 — 예전엔 내용 높이만큼만 차지해서 아래가 비었다.
+  // 가로 리스트라 세로가 교차축이므로 flex 가 아니라 alignSelf 로 늘려야 한다
+  // (flex:1 을 주면 가로로 늘어나 CARD_WIDTH 가 깨진다).
   slideCard: {
     width: CARD_WIDTH,
     marginRight: GAP,
+    alignSelf: 'stretch',
   },
 
   prizeCard: {
+    flex: 1,
     backgroundColor: colors.card,
     borderRadius: radius.xl,
     ...shadow.card,
@@ -570,7 +589,11 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
+  // 카드가 늘어난 만큼 남는 세로 공간을 상품 사진이 가져간다(경품을 크게 보여주는
+  // 화면이라 여백보다 사진에 주는 게 낫다). 데스크탑 그리드는 부모 높이가 정해져
+  // 있지 않아 flex 가 자라지 않고 minHeight 만큼만 그려진다 — 기존과 동일.
   prizeImageWrap: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.lg,
