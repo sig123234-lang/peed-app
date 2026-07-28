@@ -192,6 +192,18 @@ export function PostDetail({
         <InfoRow label="PEEDBACK 적립" value={`+${post.earnedPb} PB`} accent />
       </View>
 
+      {/* 도장 패스포트 도장 — 이 글로 도장이 찍힌 지역 */}
+      {post.stampRegion ? (
+        <View style={styles.stampWrap}>
+          <View style={styles.stamp}>
+            <Text style={styles.stampRegion} numberOfLines={1}>
+              {post.stampRegion}
+            </Text>
+            <Text style={styles.stampWord}>도 장</Text>
+          </View>
+        </View>
+      ) : null}
+
       <View style={styles.commentsBlock}>
         <Text style={styles.commentsHead}>댓글 {commentCount}</Text>
 
@@ -476,6 +488,28 @@ const styles = StyleSheet.create({
   infoLabel: { fontSize: 12.5, fontWeight: '700', color: colors.textSecondary },
   infoValue: { flex: 1, textAlign: 'right', fontSize: 13, fontWeight: '800', color: colors.textPrimary },
   infoValueAccent: { color: colors.tangerine },
+
+  // 도장 — 피드 카드와 같은 표식(고무도장처럼 살짝 기울인 잉크 테두리).
+  stampWrap: { alignItems: 'flex-end', marginTop: spacing.md, marginRight: 4 },
+  stamp: {
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 2,
+    borderColor: colors.coralDeep,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(240,66,79,0.04)',
+    transform: [{ rotate: '-7deg' }],
+    opacity: 0.92,
+  },
+  stampRegion: { fontSize: 9.5, fontWeight: '800', letterSpacing: 0.4, color: colors.coralDeep },
+  stampWord: {
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 2,
+    color: colors.coralDeep,
+    marginTop: 1,
+  },
 
   commentsBlock: { marginTop: spacing.lg, gap: 6 },
   commentsHead: { fontSize: 13, fontWeight: '900', color: colors.textPrimary },

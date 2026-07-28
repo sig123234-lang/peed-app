@@ -291,6 +291,8 @@ export function PostCard({ post }: { post: Post }) {
         />
       </View>
 
+      {post.stampRegion ? <StampMark region={post.stampRegion} /> : null}
+
       <Perforation />
 
       {/* barcode + actions */}
@@ -353,6 +355,21 @@ function Perforation() {
 /* 뜯어낸 종이 가장자리 — 배경색 정사각형을 45° 돌려 카드 위/아래에 반쯤 걸친다.
    카드가 overflow:hidden 이라 바깥으로 나간 절반이 잘리고, 남은 절반이 종이를
    물어뜯은 톱니로 보인다. 배경(colors.surface) 과 같은 색이어야 자연스럽다. */
+/* 도장 패스포트 도장 — 이 글로 도장이 찍힌 지역을 영수증 위에 눌러 찍는다.
+   실제 고무도장처럼 살짝 기울이고 잉크색 테두리를 두 겹으로 둔다. */
+function StampMark({ region }: { region: string }) {
+  return (
+    <View style={styles.stampWrap}>
+      <View style={styles.stamp}>
+        <Text style={styles.stampRegion} numberOfLines={1}>
+          {region}
+        </Text>
+        <Text style={styles.stampWord}>도 장</Text>
+      </View>
+    </View>
+  );
+}
+
 const TOOTH = 12;
 // 카드보다 넉넉히 많이 깔고 넘치는 만큼은 카드가 잘라낸다 — 카드 폭이 화면마다
 // 달라도 톱니가 중간에 끊기지 않는다.
@@ -704,6 +721,42 @@ const styles = StyleSheet.create({
   rValueStrong: {
     fontSize: 16,
     fontWeight: '800',
+  },
+
+  /* 도장 */
+  // 오른쪽에 치우쳐 눌러 찍는다 — 가운데에 반듯하게 두면 인쇄된 항목처럼 보이고,
+  // 손으로 찍은 표식이라는 느낌이 안 산다.
+  stampWrap: {
+    alignItems: 'flex-end',
+    paddingRight: CARD_PAD + 6,
+    marginTop: spacing.sm,
+    marginBottom: -2,
+  },
+  stamp: {
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 2,
+    borderColor: colors.coralDeep,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(240,66,79,0.04)',
+    transform: [{ rotate: '-7deg' }],
+    opacity: 0.92,
+  },
+  stampRegion: {
+    fontFamily: mono,
+    fontSize: 9.5,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    color: colors.coralDeep,
+  },
+  stampWord: {
+    fontFamily: mono,
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 2,
+    color: colors.coralDeep,
+    marginTop: 1,
   },
 
   /* perforation */

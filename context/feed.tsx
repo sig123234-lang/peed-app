@@ -63,6 +63,8 @@ export type Post = {
   isBurning: boolean;
   earnedPb: number;
   isPrivate?: boolean; // 비공개 = 홈 피드엔 안 보이고 내 프로필에만
+  // 이 글로 도장이 찍혔다면 그 지역명("서울 강남구"). 게시물에 도장을 찍어 보여준다.
+  stampRegion?: string;
 };
 
 // A draggable decoration placed on a story (Instagram-style). Position is stored
@@ -201,6 +203,7 @@ function mapServerPost(sp: any, meId: string): Post {
     isBurning: !!sp.isBurning,
     earnedPb: Number(sp.earnedPb) || 0,
     isPrivate: !!sp.isPrivate,
+    stampRegion: String(sp.stampRegion || ''),
   };
 }
 
@@ -298,6 +301,8 @@ type FeedContextValue = {
     isBurning?: boolean;
     earnedPb?: number;
     isPrivate?: boolean;
+    // 이 리뷰로 도장이 찍혔으면 그 지역명. 서버가 패스포트와 다시 대조한다.
+    stampRegion?: string;
   }) => void;
 };
 
@@ -708,6 +713,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
         isBurning: input.isBurning ?? false,
         earnedPb: input.earnedPb ?? 0,
         isPrivate: input.isPrivate ?? false,
+        stampRegion: input.stampRegion ?? '',
       };
       setMyPosts((prev) => [optimistic, ...prev]);
       if (!optimistic.isPrivate) setPosts((prev) => [optimistic, ...prev]);
@@ -741,6 +747,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
               isBurning: input.isBurning ?? false,
               earnedPb: input.earnedPb ?? 0,
               isPrivate: input.isPrivate ?? false,
+              stampRegion: input.stampRegion ?? '',
             }),
           });
           const d = await r.json();

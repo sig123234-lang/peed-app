@@ -26,6 +26,9 @@ export type ServerPost = {
   isBurning: boolean;
   earnedPb: number;
   isPrivate: boolean;
+  // 이 글로 도장 패스포트 도장이 찍혔다면 그 지역명. 게시물에 도장을 찍어
+  // 보여주는 용도라 빈 문자열이면 안 찍힌 글이다.
+  stampRegion: string;
   saveCount: number;
   comments: ServerComment[];
   createdAt: number;
@@ -65,6 +68,7 @@ export async function createPost(
     isBurning: !!input.isBurning,
     earnedPb: Number(input.earnedPb) || 0,
     isPrivate: !!input.isPrivate,
+    stampRegion: String(input.stampRegion || ''),
     saveCount: 0,
     comments: [],
     createdAt: Date.now(),

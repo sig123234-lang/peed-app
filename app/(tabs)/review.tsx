@@ -341,24 +341,31 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
     const store = storeName.trim();
     const caption = comment.trim();
 
-    // 게시물은 항상 만든다. 이용 사진이 없으면 홈 피드에는 안 뜨지만,
-    // 공개로 두면 다른 사람이 내 프로필에 놀러 왔을 때 볼 수 있다.
-    addPost({
-      store,
-      category,
-      image: photos.length > 0 ? { uri: photos[0] } : undefined,
-      rating: rating ?? 5,
-      caption,
-      tags,
-      location,
-      people: Number(peopleCount.replace(/[^0-9]/g, '')) || 1,
-      price: Number(String(totalPrice).replace(/[^0-9]/g, '')) || 0,
-      isBurning: autoBurning,
-      earnedPb: reward,
-      isPrivate: !isPublic,
-    });
+    // 게시물에 찍을 도장 지역. 리뷰를 먼저 보내야 알 수 있다.
+    const makePost = (stampRegion: string) =>
+      // 게시물은 항상 만든다(리뷰 저장이 실패해도). 이용 사진이 없으면 홈 피드에는
+      // 안 뜨지만, 공개로 두면 다른 사람이 내 프로필에 놀러 왔을 때 볼 수 있다.
+      addPost({
+        store,
+        category,
+        image: photos.length > 0 ? { uri: photos[0] } : undefined,
+        rating: rating ?? 5,
+        caption,
+        tags,
+        location,
+        people: Number(peopleCount.replace(/[^0-9]/g, '')) || 1,
+        price: Number(String(totalPrice).replace(/[^0-9]/g, '')) || 0,
+        isBurning: autoBurning,
+        earnedPb: reward,
+        isPrivate: !isPublic,
+        stampRegion,
+      });
 
-    // 서버에 리뷰 저장 + PB 적립. 버닝 여부·적립액은 서버가 다시 판정한다.
+    // 서버에 리뷰 저장 + PB 적립. 버닝 여부·적립액·도장은 서버가 판정한다.
+    //
+    // 게시물은 이 응답을 받은 뒤에 만든다 — 도장이 찍혔는지 알아야 게시물에도
+    // 도장을 남길 수 있고, 서버가 패스포트와 대조하려면 도장이 이미 찍혀 있어야
+    // 한다(순서가 반대면 대조에 실패해 도장이 빠진다).
     fetch('/api/review', {
       method: 'POST',
       credentials: 'include',
@@ -379,18 +386,23 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
         if (d && typeof d.balance === 'number') setBalance(d.balance);
         if (typeof d?.award === 'number' && d.award > 0) setEarnedPb(d.award);
         if (typeof d?.burning === 'boolean') setAwardedBurning(d.burning);
+        const stampedRegion = d?.stampAdded ? String(d.region || '') : '';
         if (d?.stampAdded) {
           setStampResult({
-            region: String(d.region || ''),
+            region: stampedRegion,
             count: Number(d.stampCount) || 0,
             goal: Number(d.goal) || 5,
             done: !!d.passportDone,
             bonusPb: Number(d.bonusPb) || 0,
           });
         }
+        makePost(stampedRegion);
         refreshPassport();
       })
-      .catch(() => {});
+      .catch(() => {
+        // 리뷰 저장이 실패해도 글은 남긴다(도장은 못 찍는다).
+        makePost('');
+      });
 
     setStampResult(null);
     setStage('success');

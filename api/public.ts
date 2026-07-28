@@ -313,6 +313,7 @@ function toClientPost(p: ServerPost, authorMap: Record<string, User>, savedSet?:
     isBurning: p.isBurning,
     earnedPb: p.earnedPb,
     isPrivate: p.isPrivate,
+    stampRegion: p.stampRegion || '',
   };
 }
 
@@ -851,6 +852,23 @@ async function handleCreatePost(uid: string, b: any, res: any) {
   // 버닝 여부는 서버가 매장명으로 판정한다 — 유저가 '일반 리뷰'로 올려도 등록된
   // 버닝 매장이면 홈 피드에 버닝으로 뜬다. 클라이언트가 보낸 isBurning 은 믿지 않는다.
   const resolved = await resolveStore(String(b.store || ''));
+
+  // 도장 표시도 서버가 다시 확인한다 — 클라이언트가 보낸 지역명은 믿지 않는다.
+  // 도장은 /api/review 가 먼저 찍고(리뷰 화면이 그 응답을 받은 뒤 글을 만든다),
+  // 여기서는 그 지역이 정말 이 유저가 모으고 있는 지역인지만 본다.
+  //
+  // 매장명까지 대조하지는 않는다. 도장에 기록되는 이름은 캡처에서 읽은 것이고
+  // 게시물은 폼에 적힌 이름으로 만들어져서, 둘이 조금만 달라도 정당하게 찍힌
+  // 도장이 표시에서 빠진다. 지역이 맞는지만 보면 남의 지역을 사칭할 수는 없다.
+  // 완주 직후에는 region 이 비고 다음 지역을 고를 수 있게 열리므로 history 도 본다.
+  let stampRegion = '';
+  const claimedRegion = String(b.stampRegion || '').trim();
+  if (claimedRegion) {
+    const pp = await passport.get(uid);
+    if (pp.region === claimedRegion || pp.history[0] === claimedRegion) {
+      stampRegion = claimedRegion;
+    }
+  }
   // 표시용 적립 라벨. 실제 PB 적립은 /api/review 한 곳에서만 일어난다.
   const post = await createPost(uid, {
     kind: b.kind,
@@ -866,6 +884,7 @@ async function handleCreatePost(uid: string, b: any, res: any) {
     isBurning: resolved.burning,
     earnedPb: resolved.reward,
     isPrivate: b.isPrivate,
+    stampRegion,
   });
   const author = await getUserById(uid);
   const map: Record<string, User> = author ? { [uid]: author } : {};
