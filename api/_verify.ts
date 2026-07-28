@@ -397,6 +397,9 @@ const FLAGS: Record<string, { label: string; weight: number }> = {
   caption_echo: { label: '이전 리뷰와 본문 동일', weight: 20 },
   daily_volume: { label: '하루 작성량 과다', weight: 15 },
   ocr_unreadable: { label: '캡처를 읽지 못함', weight: 15 },
+  // 부정이 아니라 판별 실패다. 단독으로는 'clean' 을 넘지 않게 낮게 둔다 —
+  // 다만 다른 신호와 겹치면 검수 대상이 되도록 점수는 매긴다.
+  region_unknown: { label: '지역을 판별하지 못함(도장 미적립)', weight: 15 },
 };
 
 export type RiskResult = {

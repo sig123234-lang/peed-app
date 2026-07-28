@@ -84,7 +84,7 @@ export default async function handler(req: any, res: any) {
       const mine = reviews.filter((r) => r.uid === uid).slice(0, 60);
       flagCodes.push(...behaviourFlags(mine, Date.now(), storeName, caption));
     }
-    const risk = scoreRisk(flagCodes);
+    let risk = scoreRisk(flagCodes);
 
     const rec: any = {
       id: `rv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
@@ -141,6 +141,18 @@ export default async function handler(req: any, res: any) {
         const matched = matchRegion(source);
         region = matched ? regionKey(matched) : '';
         rec.region = region;
+
+        // 지역을 못 찾으면 이 리뷰는 도장이 영영 안 찍힌다. 그런데 지금까지는
+        // 조용히 넘어가서 유저도 어드민도 이유를 알 수 없었다. 적립은 그대로 두되
+        // 플래그로 남겨 검수 흐름에 노출한다(정책: 지급하되 플래그).
+        if (!region) {
+          flagCodes.push('region_unknown');
+          risk = scoreRisk(flagCodes);
+          rec.risk = risk.score;
+          rec.riskLevel = risk.level;
+          rec.flags = risk.flags.map((f) => f.code);
+          rec.shotUrl = risk.level === 'clean' ? '' : scan?.shotUrl || '';
+        }
 
         // 도장 패스포트 — 고른 지역의 '서로 다른 매장' 에만 찍힌다.
         if (region) {
