@@ -16,6 +16,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { PostDetail } from '@/components/feed/PostDetail';
 import { StampPassport } from '@/components/feed/StampPassport';
 import { AvatarCropper } from '@/components/ui/AvatarCropper';
 
@@ -200,8 +201,6 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [selected, setSelected] = useState<GridPost | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
-  const [imgIndex, setImgIndex] = useState(0);
-  const [detailRatio, setDetailRatio] = useState(1); // 상세 이미지 가로/세로 비율
   // 게시물 수정/삭제(인스타식) — 문구 편집은 로컬 오버라이드 + 피드 반영, 저장 유지.
   const [postMenu, setPostMenu] = useState(false);
   const [editPostOpen, setEditPostOpen] = useState(false);
@@ -396,6 +395,16 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
       });
   }, [myPosts, captionEdits, privacyEdits, hiddenPosts]);
 
+  // 상세에 넘길 원본 게시물 — 그리드 항목(GridPost)은 화면용으로 납작하게 만든
+  // 것이라 작성자·댓글·찜이 없다. 같은 id 의 피드 게시물을 찾아 그대로 넘기고,
+  // 로컬에서 고친 문구·공개범위만 덮어쓴다.
+  const selectedPost = useMemo(() => {
+    if (!selected) return null;
+    const base = myPosts.find((p) => p.id === selected.key);
+    if (!base) return null;
+    return { ...base, caption: selected.caption, isPrivate: selected.isPrivate };
+  }, [selected, myPosts]);
+
   // 도장 진행도 — 이번 지역에서 찍은 개수와 지금까지 완주한 지역 수.
   const stampCount = passport.stores.length;
 
@@ -404,8 +413,6 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
   const closeDetailFn = useCallback(() => setDetailVisible(false), []);
   const openPost = (post: GridPost) => {
     setSelected(post);
-    setImgIndex(0);
-    setDetailRatio(1);
     setDetailVisible(true);
     openOverlay(closeDetailFn);
   };
@@ -462,11 +469,6 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
     closePostMenu();
     closeDetail();
   };
-
-  // 상세 이미지 높이 — 원본 비율대로(위 잘림 방지). 너무 세로로 긴 사진만 클램프.
-  const detailImgHeight = Math.round(
-    Math.max(width * 0.72, Math.min(width * 1.4, width / (detailRatio || 1)))
-  );
 
   const winBadge = (status: WinItem['status']) => {
     if (status === '수령전') return { wrap: styles.badgePending, text: styles.badgePendingText };
@@ -749,102 +751,13 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
         </View>
       </ScrollView>
 
-      {/* ── detail modal ── */}
-      <Modal
+      {/* ── 게시물 상세 — 인스타/페북식 보기(데스크탑 2단, 모바일 1단) ── */}
+      <PostDetail
+        post={selectedPost}
         visible={detailVisible}
-        animationType="slide"
-        onRequestClose={closeDetail}
-      >
-        <SafeAreaView style={styles.detail} edges={['top', 'bottom']}>
-          <View style={styles.detailHeader}>
-            <TouchableOpacity onPress={closeDetail} hitSlop={10}>
-              <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-            </TouchableOpacity>
-            <Text style={styles.detailHeaderTitle}>게시물</Text>
-            <TouchableOpacity onPress={openPostMenu} hitSlop={10}>
-              <Ionicons name="ellipsis-horizontal" size={22} color={colors.textPrimary} />
-            </TouchableOpacity>
-          </View>
-
-          {selected && (
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <ScrollView
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                onMomentumScrollEnd={(e) =>
-                  setImgIndex(Math.round(e.nativeEvent.contentOffset.x / width))
-                }
-              >
-                {selected.images.map((img, i) => (
-                  <Image
-                    key={i}
-                    source={img}
-                    style={[styles.detailImage, { height: detailImgHeight }]}
-                    resizeMode="cover"
-                    onLoad={(e) => {
-                      if (i !== 0) return;
-                      const src: any = (e.nativeEvent as any)?.source || e.nativeEvent;
-                      const w = src?.width;
-                      const h = src?.height;
-                      if (w && h) setDetailRatio(w / h);
-                    }}
-                  />
-                ))}
-              </ScrollView>
-
-              {selected.images.length > 1 && (
-                <View style={styles.dots}>
-                  {selected.images.map((_, i) => (
-                    <View
-                      key={i}
-                      style={[styles.dot, imgIndex === i && styles.dotActive]}
-                    />
-                  ))}
-                </View>
-              )}
-
-              <View style={styles.detailBody}>
-                <View style={styles.detailTitleRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.detailStore}>{selected.store}</Text>
-                    <Text style={styles.detailMeta}>
-                      {selected.category} · {selected.date}
-                    </Text>
-                  </View>
-                  {selected.isPrivate && (
-                    <View style={styles.privateChip}>
-                      <Ionicons name="lock-closed" size={12} color={colors.textSecondary} />
-                      <Text style={styles.privateChipText}>비공개</Text>
-                    </View>
-                  )}
-                  {selected.isBurning && (
-                    <View style={styles.detailBurn}>
-                      <Text style={styles.detailBurnText}>🔥 버닝</Text>
-                    </View>
-                  )}
-                </View>
-
-                <Text style={styles.detailCaption}>{selected.caption}</Text>
-
-                <View style={styles.detailReceipt}>
-                  <DRow label="인원" value={selected.people} />
-                  <DRow label="결제금액" value={selected.price} />
-                  {selected.menu ? <DRow label="메뉴" value={selected.menu} /> : null}
-                  {selected.platform ? (
-                    <DRow label="리뷰 플랫폼" value={selected.platform} />
-                  ) : null}
-                  {selected.address ? <DRow label="위치" value={selected.address} /> : null}
-                  <View style={styles.detailPbRow}>
-                    <Text style={styles.detailPbLabel}>PEEDBACK 적립</Text>
-                    <Text style={styles.detailPbValue}>+{selected.earnedPb} PB</Text>
-                  </View>
-                </View>
-              </View>
-            </ScrollView>
-          )}
-        </SafeAreaView>
-      </Modal>
+        onClose={closeDetail}
+        onOpenMenu={openPostMenu}
+      />
 
       {/* ── post "…" menu ── */}
       <Modal visible={postMenu} transparent animationType="fade" onRequestClose={closePostMenu}>
@@ -1054,14 +967,6 @@ function Stat({ value, label, onPress }: { value: string; label: string; onPress
   );
 }
 
-function DRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.dRow}>
-      <Text style={styles.dLabel}>{label}</Text>
-      <Text style={styles.dValue}>{value}</Text>
-    </View>
-  );
-}
 
 const styles = StyleSheet.create({
   container: {
@@ -1600,138 +1505,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  privateChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    marginLeft: spacing.sm,
-  },
-  privateChipText: { fontSize: 12, fontWeight: '800', color: colors.textSecondary },
 
-  /* detail modal */
-  detail: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  detailHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.line,
-  },
-  detailHeaderTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  detailImage: {
-    width,
-    height: width,
-    backgroundColor: colors.surfaceAlt,
-  },
-  dots: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 6,
-    paddingTop: spacing.md,
-  },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.lineStrong,
-  },
-  dotActive: {
-    backgroundColor: colors.primary,
-    width: 18,
-  },
-  detailBody: {
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing['3xl'],
-  },
-  detailTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: spacing.md,
-  },
-  detailStore: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  detailMeta: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  detailBurn: {
-    backgroundColor: colors.coralSoft,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 5,
-  },
-  detailBurnText: {
-    color: colors.coralDeep,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  detailCaption: {
-    fontSize: 15,
-    lineHeight: 23,
-    color: colors.textPrimary,
-    fontWeight: '500',
-    marginBottom: spacing.lg,
-  },
-  detailReceipt: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    gap: spacing.sm,
-  },
-  dRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: spacing.lg,
-  },
-  dLabel: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '700',
-  },
-  dValue: {
-    flex: 1,
-    textAlign: 'right',
-    fontSize: 13,
-    color: colors.textPrimary,
-    fontWeight: '700',
-  },
-  detailPbRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: spacing.sm,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-  },
-  detailPbLabel: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  detailPbValue: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: colors.limeInk,
-  },
 });

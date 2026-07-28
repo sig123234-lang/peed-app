@@ -117,10 +117,14 @@ export function CommentsSheet({
   post,
   visible,
   onClose,
+  centered,
 }: {
   post: Post;
   visible: boolean;
   onClose: () => void;
+  /** 화면 정중앙 기준으로 띄운다. 피드가 아니라 가운데 띄운 다이얼로그
+   *  (게시물 상세)에서 열 때 — 기본값은 피드 기준선에 맞추는 것이다. */
+  centered?: boolean;
 }) {
   const { addComment, editComment, deleteComment, me } = useFeed();
   const { viewUser } = useShell();
@@ -255,6 +259,7 @@ export function CommentsSheet({
             style={[
               styles.sheet,
               isDesktop && styles.sheetDesktop,
+              isDesktop && centered && styles.sheetCentered,
               { paddingBottom: Math.max(insets.bottom, 12) },
             ]}
             activeOpacity={1}
@@ -393,13 +398,15 @@ export function CommentsSheet({
   );
 
   // 웹: 커스텀 하단 네비(position:absolute, zIndex 999) 위로 확실히 올리기 위해
-  // <body> 로 포털해 zIndex 1000 을 준다. 시트는 화면 맨 아래에 앵커링해 입력창이
-  // 바닥에 딱 붙게 한다(예전 RN Modal 은 zIndex 0 으로 깔리고 flex 로 인해 아래가
-  // 떠 보였다).
+  // <body> 로 포털한다. 시트는 화면 맨 아래에 앵커링해 입력창이 바닥에 딱 붙게
+  // 한다(예전 RN Modal 은 zIndex 0 으로 깔리고 flex 로 인해 아래가 떠 보였다).
+  //
+  // zIndex 는 10000 — react-native-web 의 Modal 이 <body> 포털에 9999 를 쓴다.
+  // 게시물 상세(PostDetail)처럼 모달 안에서 댓글을 열면 그보다 위여야 보인다.
   if (Platform.OS === 'web' && typeof document !== 'undefined') {
     const createPortal = require('react-dom').createPortal as (c: ReactNode, el: Element) => any;
     return createPortal(
-      <div style={{ position: 'fixed', inset: 0, zIndex: 1000 }}>
+      <div style={{ position: 'fixed', inset: 0, zIndex: 10000 }}>
         <TouchableOpacity style={styles.backdropFill} activeOpacity={1} onPress={onClose} />
         <View style={[styles.sheetAnchor, isDesktop && styles.sheetAnchorDesktop]}>
           {sheetCard}
@@ -456,6 +463,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
     maxHeight: '80%',
   },
+  // 피드 보정을 되돌려 화면 정중앙에 둔다(가운데 띄운 다이얼로그 위에서 열릴 때).
+  sheetCentered: { marginRight: 0 },
   handle: {
     width: 40,
     height: 4,
