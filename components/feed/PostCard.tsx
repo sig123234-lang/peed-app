@@ -178,6 +178,8 @@ export function PostCard({ post }: { post: Post }) {
         </LinearGradient>
       )}
 
+      <TearEdge side="top" />
+
       {/* compact receipt header */}
       <View style={styles.header}>
         <Text style={styles.kicker}>★ PEED REVIEW RECEIPT ★</Text>
@@ -264,18 +266,37 @@ export function PostCard({ post }: { post: Post }) {
         )}
       </View>
 
-      {/* transaction lines (trimmed) */}
+      {/* transaction lines — 실제 영수증처럼 항목/금액 단을 세우고, 합계는
+          겹선으로 끊고, 적립은 합계 아래 별도 줄로 뺀다. */}
       <View style={styles.receipt}>
+        <View style={styles.colHead}>
+          <Text style={styles.colHeadText}>항 목</Text>
+          <View style={{ flex: 1 }} />
+          <Text style={styles.colHeadText}>금 액</Text>
+        </View>
+        <View style={styles.ruleSolid} />
+
         <ReceiptRow label="인원" value={`${post.people}인`} />
-        <View style={styles.dashedBold} />
+        <ReceiptRow label="평점" value={`${post.rating.toFixed(1)} / 5.0`} />
+        <ReceiptRow label="결제금액" value={money(post.price)} />
+
+        <View style={styles.ruleSolid} />
         <ReceiptRow label="합 계" value={money(post.price)} emphasize />
+        <View style={styles.ruleDouble} />
+
+        <ReceiptRow
+          label="PEEDBACK 적립"
+          value={`+${post.earnedPb} PB`}
+          accent={colors.tangerine}
+        />
       </View>
 
       <Perforation />
 
       {/* barcode + actions */}
       <Barcode id={post.id} />
-      <Text style={styles.barNo}>감사합니다 :) · NO.{receiptNo(post.id)}</Text>
+      <Text style={styles.barNo}>NO.{receiptNo(post.id)}</Text>
+      <Text style={styles.thanks}>이용해 주셔서 감사합니다 · PEED</Text>
 
       <View style={styles.footer}>
         <TouchableOpacity
@@ -307,6 +328,8 @@ export function PostCard({ post }: { post: Post }) {
         </TouchableOpacity>
       </View>
 
+      <TearEdge side="bottom" />
+
       {/* comments — 리치 UI + @멘션은 별도 컴포넌트로 분리 */}
       <CommentsSheet
         post={post}
@@ -327,22 +350,73 @@ function Perforation() {
   );
 }
 
+/* 뜯어낸 종이 가장자리 — 배경색 정사각형을 45° 돌려 카드 위/아래에 반쯤 걸친다.
+   카드가 overflow:hidden 이라 바깥으로 나간 절반이 잘리고, 남은 절반이 종이를
+   물어뜯은 톱니로 보인다. 배경(colors.surface) 과 같은 색이어야 자연스럽다. */
+const TOOTH = 12;
+// 카드보다 넉넉히 많이 깔고 넘치는 만큼은 카드가 잘라낸다 — 카드 폭이 화면마다
+// 달라도 톱니가 중간에 끊기지 않는다.
+const TEETH = 56;
+
+function TearEdge({ side }: { side: 'top' | 'bottom' }) {
+  return (
+    <View
+      style={[styles.tearRow, side === 'top' ? styles.tearTop : styles.tearBottom]}
+      pointerEvents="none"
+    >
+      {Array.from({ length: TEETH }, (_, i) => (
+        <View key={i} style={styles.tooth} />
+      ))}
+    </View>
+  );
+}
+
 const CARD_PAD = spacing.lg;
 
 const styles = StyleSheet.create({
+  // 영수증 한 장 — 모서리를 둥글리지 않는다(종이는 각지고, 위아래만 뜯겨 있다).
+  // 위/아래 테두리도 없앤다. 톱니(TearEdge)가 가장자리를 대신하는데 그 아래로
+  // 직선 테두리가 비치면 뜯긴 느낌이 죽는다.
   card: {
     backgroundColor: colors.paper,
-    borderRadius: radius.lg,
     overflow: 'hidden',
     marginBottom: spacing.lg,
-    paddingBottom: spacing.md,
-    borderWidth: 1,
-    borderColor: '#EFE8D8',
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.lg,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: colors.line,
     ...shadow.soft,
   },
   cardBurning: {
-    borderWidth: 1.5,
+    borderLeftWidth: 1.5,
+    borderRightWidth: 1.5,
     borderColor: '#FFD7D7',
+  },
+
+  /* 뜯긴 가장자리 */
+  // 마름모의 중심이 카드 모서리(y=0)에 오도록 줄을 반쯤 걸친다. 위 절반은 카드
+  // 밖이라 잘리고, 아래 절반이 종이를 파고들어 톱니가 된다.
+  tearRow: {
+    position: 'absolute',
+    left: -8,
+    right: -8,
+    height: TOOTH * 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 2,
+  },
+  tearTop: { top: -TOOTH },
+  tearBottom: { bottom: -TOOTH },
+  // 45° 돌린 정사각형의 가로 대각선은 변 × √2. 그만큼 띄워야 이웃한 마름모가
+  // 꼭짓점끼리 맞닿아 톱니가 끊기지 않는다(띄우지 않으면 겹치고, 더 띄우면 점선).
+  tooth: {
+    width: TOOTH,
+    height: TOOTH,
+    marginRight: Math.round(TOOTH * Math.SQRT2) - TOOTH,
+    flexShrink: 0,
+    backgroundColor: colors.surface,
+    transform: [{ rotate: '45deg' }],
   },
 
   /* burning strip */
@@ -571,6 +645,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: CARD_PAD,
     paddingTop: spacing.sm,
   },
+  // 항목/금액 단 머리 — 실제 영수증의 컬럼 헤더.
+  colHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingBottom: 3,
+  },
+  colHeadText: {
+    fontFamily: mono,
+    fontSize: 10,
+    letterSpacing: 1.5,
+    fontWeight: '700',
+    color: colors.textTertiary,
+  },
+  ruleSolid: {
+    borderTopWidth: 1,
+    borderColor: colors.lineStrong,
+    marginVertical: 4,
+  },
+  // 합계 아래 겹선 — 금액이 확정됐다는 영수증의 관용 표기.
+  ruleDouble: {
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: colors.lineStrong,
+    height: 3,
+    marginTop: 4,
+    marginBottom: 6,
+  },
   receiptRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -646,6 +747,15 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     color: colors.textTertiary,
     textAlign: 'center',
+  },
+  // 영수증 맨 아래 작은 글씨 — 실물의 인사말 자리.
+  thanks: {
+    fontFamily: mono,
+    fontSize: 10,
+    letterSpacing: 0.8,
+    color: colors.textTertiary,
+    textAlign: 'center',
+    marginTop: 3,
     marginBottom: spacing.md,
   },
 

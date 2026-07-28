@@ -61,7 +61,9 @@ export const colors = {
   surface: '#F8F4EE',
   surfaceAlt: '#F0EAE1',
   card: '#FFFFFF',
-  paper: '#FFFDF7', // warm thermal-receipt paper
+  // 영수증 종이. 크림빛(#FFFDF7)이었는데 실물 영수증은 흰 종이라 흰색으로 맞췄다.
+  // card 와 값은 같지만 뜻이 달라(카드 표면 / 영수증 지면) 토큰은 따로 둔다.
+  paper: '#FFFFFF',
   paperInk: '#2A2A28', // near-black receipt ink
   line: '#EFE8DF',
   lineStrong: '#DFD6C9',
