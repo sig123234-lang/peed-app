@@ -18,7 +18,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { type Post, useFeed } from '@/context/feed';
 import { useShell } from '@/context/shell';
 import { useIsDesktop } from '@/hooks/use-is-desktop';
-import { APP_MAX_WIDTH, colors, radius, shadow, spacing } from '@/theme';
+import {
+  APP_MAX_WIDTH,
+  colors,
+  radius,
+  RAIL_WIDTH,
+  shadow,
+  SIDEBAR_WIDTH,
+  spacing,
+} from '@/theme';
 
 /* 게시물 댓글 시트 — 리치 UI + @멘션(태그).
    - 댓글마다 이니셜 아바타(이름 해시 색) · 상대시간 · 작성자 탭 → 프로필.
@@ -431,11 +439,19 @@ const styles = StyleSheet.create({
     maxHeight: '88%',
     ...shadow.lifted,
   },
-  // 데스크탑 — 바닥에 붙은 시트가 아니라 떠 있는 카드로. 폭은 피드와 같게 맞추고
-  // 네 모서리를 모두 둥글린다(바닥에 붙지 않으므로 아래 모서리도 각지면 어색하다).
+  // 데스크탑 — 바닥에 붙은 시트가 아니라 떠 있는 카드로. 네 모서리를 모두
+  // 둥글린다(바닥에 붙지 않으므로 아래 모서리만 각지면 어색하다).
+  //
+  // 위치는 게시글 카드에 정확히 맞춘다. 이 시트는 <body> 로 포털돼 화면 좌표를
+  // 쓰는데, 피드는 3단 레이아웃의 가운데 칼럼(사이드바·레일을 뺀 나머지) 안에서
+  // 가운데 정렬되므로 화면 중심보다 (RAIL_WIDTH - SIDEBAR_WIDTH) / 2 만큼 왼쪽에
+  // 있다. 그냥 화면 가운데에 두면 댓글창만 오른쪽으로 밀려 보인다.
+  // 가운데 정렬된 박스에 마진을 주면 중심이 그 절반만큼 움직인다 → 마진 하나로
+  // 기준선이 맞는다. 폭도 카드 거터(spacing.md)를 뺀 실제 카드 폭에 맞춘다.
   sheetDesktop: {
     width: '100%',
-    maxWidth: APP_MAX_WIDTH,
+    maxWidth: APP_MAX_WIDTH - spacing.md * 2,
+    marginRight: RAIL_WIDTH - SIDEBAR_WIDTH,
     borderRadius: radius.xl,
     marginBottom: spacing.lg,
     maxHeight: '80%',
