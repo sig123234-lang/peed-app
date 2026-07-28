@@ -4,22 +4,41 @@ import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native
 
 import { BitesTray } from '@/components/feed/BitesTray';
 import { PostCard } from '@/components/feed/PostCard';
+import { SponsoredPost } from '@/components/feed/SponsoredPost';
 import { useFeed } from '@/context/feed';
 import { APP_WIDTH, colors, radius, shadow, spacing } from '@/theme';
 
-// Admin-managed sponsored banner (from /api/ads). Renders nothing until an
-// active ad exists.
-function AdBanner() {
-  const [ad, setAd] = useState<any | null>(null);
+// 활성 광고를 한 번만 불러와 위치별로 나눠 쓴다(상단 배너 / 피드 스폰서 글).
+function useAds() {
+  const [ads, setAds] = useState<any[]>([]);
   useEffect(() => {
     fetch('/api/ads')
       .then((r) => r.json())
-      .then((d) => {
-        const ads = d.ads || [];
-        setAd(ads.find((a: any) => a.placement === '피드 상단') || ads[0] || null);
-      })
+      .then((d) => setAds(d.ads || []))
       .catch(() => {});
   }, []);
+  return ads;
+}
+
+// 피드 4개마다 스폰서 글 1개를 끼운다(인스타 피드 광고처럼). 광고가 여러 개면
+// 돌아가며 노출한다.
+function interleaveAds(posts: any[], ads: any[]): any[] {
+  if (!ads.length) return posts;
+  const out: any[] = [];
+  let k = 0;
+  posts.forEach((p, i) => {
+    out.push(p);
+    if ((i + 1) % 4 === 0) {
+      out.push({ __ad: ads[k % ads.length], __key: `ad_${i}_${k}` });
+      k += 1;
+    }
+  });
+  return out;
+}
+
+// Admin-managed sponsored banner (from /api/ads). Renders nothing until an
+// active '피드 상단' ad exists.
+function AdBanner({ ad }: { ad: any | null }) {
   if (!ad) return null;
   return (
     <TouchableOpacity
@@ -47,23 +66,28 @@ function AdBanner() {
 // the scroll surface — dragging there scrolls the feed too.
 export function HomeFeed() {
   const { posts } = useFeed();
+  const ads = useAds();
   // 비공개 게시물은 홈(공개) 피드에서 숨긴다. 내 프로필(마이)에서만 보임.
   const publicPosts = posts.filter((p) => !p.isPrivate);
 
+  const topBanner = ads.find((a) => a.placement === '피드 상단') || null;
+  const feedAds = ads.filter((a) => a.placement === '피드');
+  const data = interleaveAds(publicPosts, feedAds);
+
   return (
     <FlatList
-      data={publicPosts}
-      keyExtractor={(item) => item.id}
+      data={data}
+      keyExtractor={(item) => (item.__ad ? item.__key : item.id)}
       renderItem={({ item }) => (
         <View style={styles.itemWrap}>
-          <PostCard post={item} />
+          {item.__ad ? <SponsoredPost ad={item.__ad} /> : <PostCard post={item} />}
         </View>
       )}
       showsVerticalScrollIndicator={false}
       contentContainerStyle={styles.listContent}
       ListHeaderComponent={
         <View style={styles.itemWrap}>
-          <AdBanner />
+          <AdBanner ad={topBanner} />
           <BitesTray />
         </View>
       }

@@ -16,6 +16,7 @@ export type ReservableStore = {
   photos?: string[]; // 갤러리 (네이버/업로드)
   menus?: { name: string; price: number }[]; // 메뉴·가격
   phone?: string;
+  hours?: string; // 영업시간 (네이버에서 자동 수집, 어드민 수정 가능)
 };
 
 // 실 사용 전환 — 데모 매장 제거. 실제 버닝 매장은 서버(/api/stores)에서만 온다.

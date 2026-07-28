@@ -3,6 +3,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Platform,
   ScrollView,
   StyleSheet,
@@ -12,6 +13,7 @@ import {
 } from 'react-native';
 
 import { usePb } from '@/context/pb';
+import { useShell } from '@/context/shell';
 import { APP_MAX_WIDTH, APP_WIDTH, colors, radius, shadow, spacing } from '@/theme';
 
 /* PB 미니게임 허브 — 진짜 1:1 PvP.
@@ -27,6 +29,15 @@ type GameKey = 'rps' | 'quiz' | 'lastman';
 type Outcome = 'win' | 'lose' | 'draw';
 type Phase = 'lobby' | 'waiting' | 'playing' | 'result';
 
+// 재대결(다시하기) 준비 현황 — 0/2 → 1/2 → 2/2.
+type RematchInfo = {
+  ready: number;
+  needed: number;
+  iReadied: boolean;
+  oppReadied: boolean;
+  insufficient: boolean;
+};
+
 type GameDef = {
   key: GameKey;
   name: string;
@@ -41,6 +52,7 @@ const GAMES: GameDef[] = [
   { key: 'lastman', name: '반응속도 대결', emoji: '🎯', tagline: '초록불에 먼저 누르기', colors: ['#22C55E', '#0EA5E9'] },
 ];
 
+type RpsChoice = 'rock' | 'paper' | 'scissors';
 type ServerMatch = {
   id: string;
   game: GameKey;
@@ -52,6 +64,8 @@ type ServerMatch = {
   outcome: Outcome | null;
   detail: string;
   stake: number;
+  rpsMine?: RpsChoice; // 가위바위보 리빌용
+  rpsOpp?: RpsChoice;
 };
 
 type LiveStat = { waiting: number; playing: number };
@@ -84,14 +98,27 @@ async function api(action: string, body?: any): Promise<any> {
 
 export function GameHub() {
   const { pb, refreshPb } = usePb();
+  const { openOverlay, dropOverlay } = useShell();
   const [phase, setPhase] = useState<Phase>('lobby');
   const [game, setGame] = useState<GameKey | null>(null);
   const [match, setMatch] = useState<ServerMatch | null>(null);
   const [stats, setStats] = useState<LiveStats>(EMPTY_STATS);
   const [error, setError] = useState('');
   const [waitSec, setWaitSec] = useState(0);
+  // 재대결(다시하기) 상태 — 결과 화면에서만 쓴다.
+  const [wantRematch, setWantRematch] = useState(false);
+  const [rematchInfo, setRematchInfo] = useState<RematchInfo | null>(null);
+  const [showFindNew, setShowFindNew] = useState(false);
 
   const def = GAMES.find((g) => g.key === (match?.game || game)) || null;
+
+  // 폴링 tick 이 항상 최신 값을 보도록 ref 로 들고 있는다(인터벌을 매번 다시 만들지 않으려고).
+  const matchRef = useRef<ServerMatch | null>(null);
+  const phaseRef = useRef<Phase>('lobby');
+  const wantRef = useRef(false);
+  matchRef.current = match;
+  phaseRef.current = phase;
+  wantRef.current = wantRematch;
 
   // 로비 현황 — 지어낸 숫자가 아니라 실제 대기·진행 인원.
   useEffect(() => {
@@ -109,28 +136,58 @@ export function GameHub() {
     };
   }, [phase]);
 
-  // 매칭 대기 · 대국 중에는 서버 상태를 따라간다.
+  // 매칭 대기 · 대국 중 · 결과(재대결) 에서 서버 상태를 따라간다.
+  // 폴은 항상 '지금 붙어 있는 판(matchId)' 을 함께 보내, 다른 게임의 옛 결과가
+  // 끼어들지 않게 한다. 결과 화면에서 다시하기를 누른 동안엔 want=1 로 동의를 남긴다.
   useEffect(() => {
-    if (!isWeb() || (phase !== 'waiting' && phase !== 'playing')) return;
+    if (!isWeb() || (phase !== 'waiting' && phase !== 'playing' && phase !== 'result')) return;
     let alive = true;
     const tick = async () => {
       try {
-        const d = await api('gamePoll');
+        const cur = matchRef.current;
+        const wantNow = phaseRef.current === 'result' && wantRef.current;
+        const d = await api(
+          `gamePoll&matchId=${encodeURIComponent(cur?.id || '')}&want=${wantNow ? '1' : '0'}`
+        );
         if (!alive) return;
+
         if (d?.status === 'match' && d.match) {
-          setMatch(d.match);
-          if (d.match.state === 'done') {
-            setPhase('result');
-            refreshPb();
+          const nm = d.match as ServerMatch;
+          const prevId = matchRef.current?.id;
+          if (nm.state === 'done') {
+            // 끝난 판. 결과 화면을 이미 보고 있으면(재대결 대기 중) 그대로 둔다.
+            if (phaseRef.current !== 'result') {
+              setMatch(nm);
+              setPhase('result');
+              refreshPb();
+            }
           } else {
+            // 진행 중인 판. 새 판(초기 매칭/재대결)으로 바뀌었으면 상태를 초기화한다.
+            if (nm.id !== prevId) {
+              setWantRematch(false);
+              setRematchInfo(null);
+              setShowFindNew(false);
+              refreshPb();
+            }
+            setMatch(nm);
             setPhase('playing');
           }
+        } else if (d?.status === 'rematch') {
+          setRematchInfo({
+            ready: Number(d.ready) || 0,
+            needed: Number(d.needed) || 2,
+            iReadied: !!d.iReadied,
+            oppReadied: !!d.oppReadied,
+            insufficient: !!d.insufficient,
+          });
         } else if (d?.status === 'waiting') {
           setPhase('waiting');
         } else if (d?.status === 'idle') {
-          // 대기가 만료됐거나 취소됨.
-          setPhase('lobby');
-          setMatch(null);
+          // 대기가 만료됐거나 취소됨. 결과 화면에선 그대로 둔다(옛 판이 정리돼도 결과는 유지).
+          if (phaseRef.current !== 'result') {
+            setPhase('lobby');
+            setMatch(null);
+          }
         }
       } catch {
         // 네트워크가 잠깐 끊겨도 폴링은 계속한다.
@@ -143,6 +200,16 @@ export function GameHub() {
       clearInterval(iv);
     };
   }, [phase, refreshPb]);
+
+  // 다시하기를 눌렀는데 상대가 10초간 응답이 없으면 '새 상대 찾기' 를 함께 띄운다.
+  useEffect(() => {
+    if (phase !== 'result' || !wantRematch) {
+      setShowFindNew(false);
+      return;
+    }
+    const t = setTimeout(() => setShowFindNew(true), 10000);
+    return () => clearTimeout(t);
+  }, [phase, wantRematch]);
 
   // 대기 시간 표시
   useEffect(() => {
@@ -217,11 +284,56 @@ export function GameHub() {
     setPhase('lobby');
     setGame(null);
     setMatch(null);
+    setWantRematch(false);
+    setRematchInfo(null);
+    setShowFindNew(false);
   }, [refreshPb]);
 
-  const again = useCallback(() => {
+  // 게임에 들어가면(로비가 아니면) 히스토리에 항목을 쌓아 '오버레이'로 등록한다.
+  // 그래야 하드웨어/브라우저 뒤로가기를 눌러도 버닝 같은 이전 탭이 아니라
+  // '게임 목록(로비)'으로 돌아온다(뒤로가기 = 오버레이 pop → quit → 로비).
+  // quit 참조가 바뀌어도 히스토리 항목이 중복으로 쌓이지 않게 ref 로 감싼다.
+  const quitRef = useRef(quit);
+  quitRef.current = quit;
+  const inGame = phase !== 'lobby';
+  useEffect(() => {
+    if (!isWeb() || !inGame) return;
+    const close = () => {
+      void quitRef.current();
+    };
+    openOverlay(close);
+    return () => dropOverlay(close);
+  }, [inGame, openOverlay, dropOverlay]);
+
+  // 다시하기 = 같은 상대와 재대결 동의. 폴이 want=1 로 서버에 동의를 남기고,
+  // 둘 다 동의하면 서버가 새 판을 열어 자동으로 대국 화면으로 넘어간다.
+  const requestRematch = useCallback(() => {
+    setWantRematch(true);
+    setShowFindNew(false);
+    // 낙관적으로 1/2(나만 동의) 표시 — 다음 폴이 서버 값으로 덮어쓴다.
+    setRematchInfo((r) => ({
+      ready: Math.max(1, r?.ready || 0),
+      needed: 2,
+      iReadied: true,
+      oppReadied: !!r?.oppReadied,
+      insufficient: !!r?.insufficient,
+    }));
+  }, []);
+
+  // 새 상대 찾기 = 재대결 동의를 거두고 일반 대기열로 다시 들어간다.
+  const findNewOpponent = useCallback(async () => {
     const k = match?.game || game;
+    setWantRematch(false);
+    setRematchInfo(null);
+    setShowFindNew(false);
     setMatch(null);
+    if (isWeb()) {
+      try {
+        await api('gameLeave', {}); // 재대결 동의 철회 + 대기열 정리
+      } catch {
+        // ignore
+      }
+    }
     if (k) join(k);
     else setPhase('lobby');
   }, [match, game, join]);
@@ -232,10 +344,23 @@ export function GameHub() {
   } else if (phase === 'waiting') {
     content = <Waiting def={def!} seconds={waitSec} onCancel={quit} />;
   } else if (phase === 'result' && match) {
-    content = <Result def={def!} match={match} onAgain={again} onLobby={quit} />;
-  } else if (match) {
     content = (
-      <View style={styles.playWrap}>
+      <Result
+        def={def!}
+        match={match}
+        wantRematch={wantRematch}
+        rematch={rematchInfo}
+        showFindNew={showFindNew}
+        onRematch={requestRematch}
+        onFindNew={findNewOpponent}
+        onLobby={quit}
+      />
+    );
+  } else if (match) {
+    // key={match.id} — 새 판(재대결)이 시작되면 게임 컴포넌트를 새로 마운트해
+    // 이전 판의 내부 상태(선택·타이머·완료 플래그)가 남지 않게 한다.
+    content = (
+      <View key={match.id} style={styles.playWrap}>
         <MatchBar def={def!} opponent={match.opponent} onQuit={quit} />
         {match.iMoved ? (
           <WaitingOpponent opponent={match.opponent} />
@@ -404,6 +529,8 @@ const RPS = [
   { key: 'scissors', emoji: '✌️', label: '가위' },
 ] as const;
 
+const RPS_SEC = 5; // 고르는 데 주어지는 시간
+
 function RockPaperScissors({
   opponent,
   onSubmit,
@@ -412,18 +539,52 @@ function RockPaperScissors({
   onSubmit: (mv: any) => void;
 }) {
   const [mine, setMine] = useState<string | null>(null);
+  const [left, setLeft] = useState(RPS_SEC);
+  const [timedOut, setTimedOut] = useState(false);
+  const doneRef = useRef(false);
+  const tickRef = useRef<any>(null);
 
-  const play = (key: string) => {
-    if (mine) return;
-    setMine(key);
-    onSubmit({ choice: key });
-  };
+  // 선택 확정(수동/자동 공통). doneRef 로 중복 제출을 막는다.
+  const play = useCallback(
+    (key: string, auto = false) => {
+      if (doneRef.current) return;
+      doneRef.current = true;
+      clearInterval(tickRef.current);
+      setMine(key);
+      if (auto) setTimedOut(true);
+      onSubmit({ choice: key });
+    },
+    [onSubmit]
+  );
+
+  // 5초 카운트다운. 다 흐르면 랜덤으로 자동 제출한다(기권 아님).
+  useEffect(() => {
+    tickRef.current = setInterval(() => {
+      setLeft((v) => {
+        if (v <= 1) {
+          clearInterval(tickRef.current);
+          const rand = RPS[Math.floor(Math.random() * RPS.length)].key;
+          play(rand, true);
+          return 0;
+        }
+        return v - 1;
+      });
+    }, 1000);
+    return () => clearInterval(tickRef.current);
+  }, [play]);
 
   const myEmoji = mine ? RPS.find((r) => r.key === mine)!.emoji : '❔';
+  const hot = !mine && left <= 2;
+  const prompt = mine ? (timedOut ? '시간 초과 — 랜덤 제출!' : '상대를 기다리는 중…') : '가위바위보!';
 
   return (
     <View style={styles.gameArea}>
-      <Text style={styles.gamePrompt}>{mine ? '상대를 기다리는 중…' : '가위바위보!'}</Text>
+      <View style={[styles.rpsRing, hot && styles.rpsRingHot, !!mine && styles.rpsRingDone]}>
+        <Text style={[styles.rpsRingTxt, hot && styles.rpsRingTxtHot, !!mine && styles.rpsRingTxtDone]}>
+          {mine ? '✓' : left}
+        </Text>
+      </View>
+      <Text style={styles.gamePrompt}>{prompt}</Text>
       <View style={styles.handRow}>
         <View style={styles.handCol}>
           <Text style={styles.handEmoji}>{myEmoji}</Text>
@@ -449,6 +610,7 @@ function RockPaperScissors({
           </TouchableOpacity>
         ))}
       </View>
+      {!mine ? <Text style={styles.rpsHint}>{RPS_SEC}초 안에 하나를 고르세요</Text> : null}
     </View>
   );
 }
@@ -619,21 +781,141 @@ function LastMan({ delayMs, onSubmit }: { delayMs: number; onSubmit: (mv: any) =
 function Result({
   def,
   match,
-  onAgain,
+  wantRematch,
+  rematch,
+  showFindNew,
+  onRematch,
+  onFindNew,
   onLobby,
 }: {
   def: GameDef;
   match: ServerMatch;
-  onAgain: () => void;
+  wantRematch: boolean;
+  rematch: RematchInfo | null;
+  showFindNew: boolean;
+  onRematch: () => void;
+  onFindNew: () => void;
   onLobby: () => void;
 }) {
   const win = match.outcome === 'win';
   const draw = match.outcome === 'draw';
   const accent = win ? colors.success : draw ? colors.textSecondary : colors.danger;
   const delta = win ? `+${match.stake}` : draw ? '±0' : `-${match.stake}`;
+
+  const ready = rematch?.ready ?? (wantRematch ? 1 : 0);
+  const oppReadied = !!rematch?.oppReadied;
+  const insufficient = !!rematch?.insufficient;
+
+  // 가위바위보 리빌 — '가위·바위·보'를 외치고, '보' 뒤 1초쯤 뜸을 들였다가 손을
+  // 낸다. 초반엔 주먹을 보이지 않고 낼 때 손이 '팡' 나타난다. 두 손은 서로 마주
+  // 보게(상대 손을 좌우 반전) 놓아 진짜 상대와 마주 앉아 하는 느낌을 준다.
+  const isRps = match.game === 'rps' && !!match.rpsMine && !!match.rpsOpp;
+  const [reveal, setReveal] = useState(!isRps);
+  const [beat, setBeat] = useState(0); // 0=가위,1=바위,2=보
+  const [thrown, setThrown] = useState(false); // '보' 뒤 1초 → 손을 낸다
+  useEffect(() => {
+    if (reveal) return;
+    if (!thrown) {
+      if (beat < 2) {
+        const t = setTimeout(() => setBeat((b) => b + 1), 500);
+        return () => clearTimeout(t);
+      }
+      // '보'를 외친 뒤 1초 정도 뜸을 들였다가 손을 낸다.
+      const t = setTimeout(() => setThrown(true), 1000);
+      return () => clearTimeout(t);
+    }
+    // 낸 손을 잠깐 보여준 뒤 결과 페이지로 넘어간다.
+    const t = setTimeout(() => setReveal(true), 950);
+    return () => clearTimeout(t);
+  }, [reveal, beat, thrown]);
+  const emojiOf = (c?: RpsChoice) =>
+    c === 'rock' ? '✊' : c === 'paper' ? '✋' : c === 'scissors' ? '✌️' : '❔';
+
+  // '가위·바위·보'를 외칠 때마다 글자가 '툭' 튀는 박자.
+  const chantPop = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!isRps || reveal || thrown) return;
+    chantPop.setValue(0.7);
+    Animated.spring(chantPop, {
+      toValue: 1,
+      friction: 4,
+      tension: 180,
+      useNativeDriver: false,
+    }).start();
+  }, [beat, isRps, reveal, thrown, chantPop]);
+
+  // 손은 낼 때 부드럽게 '페이드+살짝 확대'로 나타난다. scale 은 1.0 을 넘기지
+  // 않게(overshootClamping) 잡아서 iOS 에서 손끝이 박스를 벗어나 잘리지 않게 한다.
+  const appear = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!thrown) {
+      appear.setValue(0);
+      return;
+    }
+    Animated.spring(appear, {
+      toValue: 1,
+      friction: 7,
+      tension: 90,
+      overshootClamping: true,
+      useNativeDriver: false,
+    }).start();
+  }, [thrown, appear]);
+  const appearScale = appear.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] });
+
+  if (isRps && !reveal) {
+    // 가위·바위·보를 외치는 동안엔 손이 없다가, '보' 1초 뒤 두 손이 마주 보며 팡.
+    return (
+      <View style={styles.centerWrap}>
+        <Text style={styles.matchGame}>{def.emoji} {def.name}</Text>
+        <Animated.Text style={[styles.rpsBeat, { transform: [{ scale: chantPop }] }]}>
+          {['가위', '바위', '보'][beat]}
+        </Animated.Text>
+        <View style={styles.handRow}>
+          <View style={styles.handCol}>
+            {/* 내 손 — 낼 때 부드럽게 나타난다 */}
+            <Animated.Text
+              style={[styles.handEmoji, { opacity: appear, transform: [{ scale: appearScale }] }]}
+            >
+              {emojiOf(match.rpsMine)}
+            </Animated.Text>
+            <Text style={styles.handName}>나</Text>
+          </View>
+          <Text style={styles.handVs}>VS</Text>
+          <View style={styles.handCol}>
+            {/* 상대 손 — 좌우 반전으로 나와 마주 보게 */}
+            <Animated.Text
+              style={[
+                styles.handEmoji,
+                { opacity: appear, transform: [{ scale: appearScale }, { scaleX: -1 }] },
+              ]}
+            >
+              {emojiOf(match.rpsOpp)}
+            </Animated.Text>
+            <Text style={styles.handName} numberOfLines={1}>{match.opponent}</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.centerWrap}>
-      <Text style={styles.resultEmoji}>{win ? '🏆' : draw ? '🤝' : '💦'}</Text>
+      {isRps ? (
+        // 공개된 손 — 내 수 vs 상대 수.
+        <View style={styles.rpsRevealRow}>
+          <View style={styles.handCol}>
+            <Text style={styles.handEmoji}>{emojiOf(match.rpsMine)}</Text>
+            <Text style={styles.handName}>나</Text>
+          </View>
+          <Text style={styles.handVs}>VS</Text>
+          <View style={styles.handCol}>
+            <Text style={styles.handEmoji}>{emojiOf(match.rpsOpp)}</Text>
+            <Text style={styles.handName} numberOfLines={1}>{match.opponent}</Text>
+          </View>
+        </View>
+      ) : (
+        <Text style={styles.resultEmoji}>{win ? '🏆' : draw ? '🤝' : '💦'}</Text>
+      )}
       <Text style={[styles.resultTitle, { color: accent }]}>
         {win ? '승리!' : draw ? '무승부' : '패배'}
       </Text>
@@ -645,11 +927,56 @@ function Result({
         <Text style={[styles.deltaTxt, { color: accent }]}>{delta} PB</Text>
       </View>
 
-      <TouchableOpacity activeOpacity={0.9} onPress={onAgain} style={styles.againBtn}>
-        <LinearGradient colors={['#7C5CFF', '#4F6BFF']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.againGrad}>
-          <Text style={styles.againTxt}>다시 대결</Text>
-        </LinearGradient>
-      </TouchableOpacity>
+      {wantRematch ? (
+        // 내가 다시하기를 눌렀다 — 준비 현황(1/2 → 2/2)과 상대 응답을 보여준다.
+        <View style={styles.rematchBox}>
+          <View style={styles.readyRow}>
+            <View style={[styles.readyPill, styles.readyPillOn]}>
+              <Text style={[styles.readyPillTxt, styles.readyPillTxtOn]}>나 ✓</Text>
+            </View>
+            <View style={[styles.readyPill, oppReadied && styles.readyPillOn]}>
+              {oppReadied ? (
+                <Text style={[styles.readyPillTxt, styles.readyPillTxtOn]}>{match.opponent} ✓</Text>
+              ) : (
+                <>
+                  <ActivityIndicator size="small" color={colors.textTertiary} />
+                  <Text style={styles.readyPillTxt} numberOfLines={1}>{match.opponent}</Text>
+                </>
+              )}
+            </View>
+          </View>
+          <Text style={styles.readyCount}>{ready} / 2 준비됨</Text>
+          <Text style={styles.readyHint}>
+            {insufficient
+              ? '상대의 PB가 부족해 다시할 수 없어요.'
+              : oppReadied
+                ? '곧 시작해요…'
+                : `${match.opponent} 님의 수락을 기다리는 중…`}
+          </Text>
+
+          {showFindNew || insufficient ? (
+            <TouchableOpacity activeOpacity={0.9} onPress={onFindNew} style={styles.findNewBtn}>
+              <Text style={styles.findNewTxt}>새 상대 찾기</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : (
+        // 아직 안 눌렀다 — 다시하기 버튼. 상대가 먼저 눌렀으면 강조해서 알려준다.
+        <>
+          {oppReadied ? (
+            <Text style={styles.oppWantsTxt}>🔥 {match.opponent} 님이 다시하기를 기다려요!</Text>
+          ) : null}
+          <TouchableOpacity activeOpacity={0.9} onPress={onRematch} style={styles.againBtn}>
+            <LinearGradient colors={['#7C5CFF', '#4F6BFF']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.againGrad}>
+              <Text style={styles.againTxt}>
+                다시하기{ready > 0 ? `  ${ready}/2` : ''}
+              </Text>
+            </LinearGradient>
+          </TouchableOpacity>
+          <Text style={styles.againSub}>같은 상대와 한 판 더 · {match.stake} PB</Text>
+        </>
+      )}
+
       <TouchableOpacity onPress={onLobby} style={styles.lobbyBtn}>
         <Text style={styles.lobbyBtnTxt}>게임 목록</Text>
       </TouchableOpacity>
@@ -747,7 +1074,15 @@ const styles = StyleSheet.create({
   /* rps */
   handRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.lg, marginBottom: spacing['2xl'] },
   handCol: { alignItems: 'center', width: 110, gap: 6 },
-  handEmoji: { fontSize: 56 },
+  // 이모지는 글리프가 커서(특히 iOS) 줄 박스에 잘리기 쉽다 — lineHeight/height 를
+  // 넉넉히 주고 가운데 정렬해, 확대·좌우반전 때도 손끝이 안 잘리게 한다.
+  handEmoji: {
+    fontSize: 54,
+    lineHeight: 78,
+    height: 78,
+    alignSelf: 'stretch',
+    textAlign: 'center',
+  },
   handName: { fontSize: 13, fontWeight: '800', color: colors.textSecondary },
   handVs: { fontSize: 16, fontWeight: '900', color: colors.textTertiary },
   rpsBtns: { flexDirection: 'row', gap: spacing.md },
@@ -795,6 +1130,19 @@ const styles = StyleSheet.create({
 
   /* result */
   resultEmoji: { fontSize: 60, marginBottom: spacing.sm },
+  rpsBeat: {
+    fontSize: 34,
+    fontWeight: '900',
+    color: colors.primary,
+    marginBottom: spacing.lg,
+  },
+  rpsRevealRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.lg,
+    marginBottom: spacing.md,
+  },
   resultTitle: { fontSize: 30, fontWeight: '900' },
   resultGame: { fontSize: 14, fontWeight: '700', color: colors.textSecondary, marginTop: 6 },
   deltaBox: { alignItems: 'center', borderWidth: 2, borderRadius: radius.xl, paddingVertical: spacing.lg, paddingHorizontal: spacing['2xl'], marginTop: spacing.xl, marginBottom: spacing.xl, minWidth: 180 },
@@ -803,6 +1151,63 @@ const styles = StyleSheet.create({
   againBtn: { width: CARD_W },
   againGrad: { borderRadius: radius.pill, paddingVertical: 15, alignItems: 'center' },
   againTxt: { color: '#fff', fontSize: 15, fontWeight: '900' },
+  againSub: { fontSize: 12.5, fontWeight: '700', color: colors.textTertiary, marginTop: spacing.sm },
   lobbyBtn: { marginTop: spacing.md, paddingVertical: 10 },
   lobbyBtnTxt: { color: colors.textSecondary, fontSize: 14, fontWeight: '700' },
+
+  /* rps 카운트다운 */
+  rpsRing: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 4,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  rpsRingHot: { borderColor: colors.coral },
+  rpsRingDone: { borderColor: colors.success },
+  rpsRingTxt: { fontSize: 30, fontWeight: '900', color: colors.primary },
+  rpsRingTxtHot: { color: colors.coral },
+  rpsRingTxtDone: { color: colors.success },
+  rpsHint: { marginTop: spacing.lg, fontSize: 13, fontWeight: '700', color: colors.textTertiary },
+
+  /* 재대결 준비 현황 */
+  rematchBox: { width: CARD_W, alignItems: 'center', gap: spacing.sm },
+  readyRow: { flexDirection: 'row', gap: spacing.sm, width: '100%' },
+  readyPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 46,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 2,
+    borderColor: colors.line,
+  },
+  readyPillOn: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+  readyPillTxt: { fontSize: 13.5, fontWeight: '800', color: colors.textSecondary, maxWidth: 110 },
+  readyPillTxtOn: { color: colors.primary },
+  readyCount: { fontSize: 16, fontWeight: '900', color: colors.textPrimary, marginTop: spacing.sm },
+  readyHint: { fontSize: 13, fontWeight: '700', color: colors.textTertiary, textAlign: 'center' },
+  findNewBtn: {
+    marginTop: spacing.md,
+    width: '100%',
+    height: 48,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  findNewTxt: { color: '#fff', fontSize: 15, fontWeight: '900' },
+  oppWantsTxt: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: colors.coral,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
 });

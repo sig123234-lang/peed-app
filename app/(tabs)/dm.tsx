@@ -74,7 +74,7 @@ export default function DmScreen() {
     createGroup,
     askNotifyPermission,
   } = useDm();
-  const { dmTarget, clearDmTarget, setHideTabBar, viewUser } = useShell();
+  const { dmTarget, clearDmTarget, setHideTabBar, viewUser, openOverlay, dropOverlay } = useShell();
   const { joinCall, activeConvId } = useVoice();
   const isDesktop = useIsDesktop();
 
@@ -127,6 +127,28 @@ export default function DmScreen() {
     setHideTabBar(!isDesktop && !!selectedId);
     return () => setHideTabBar(false);
   }, [isDesktop, selectedId, setHideTabBar]);
+
+  // 모바일에서 대화방을 열면 히스토리에 항목을 하나 쌓아 '오버레이'로 등록한다.
+  // 그래야 갤럭시 하드웨어 뒤로가기 / 아이폰 스와이프-백을 눌러도 홈으로 나가지 않고
+  // 메시지 목록으로 돌아온다(뒤로가기 = 오버레이 pop → selectedId 초기화).
+  const chatOpen = !isDesktop && !!selectedId;
+  useEffect(() => {
+    if (!chatOpen) return;
+    const close = () => setSelectedId(null);
+    openOverlay(close);
+    return () => dropOverlay(close);
+  }, [chatOpen, openOverlay, dropOverlay]);
+
+  // 좌상단 뒤로가기 = 하드웨어 뒤로가기와 동일 경로로 처리한다.
+  // 웹(모바일)에선 history.back() 으로 위에서 쌓은 히스토리 항목까지 소비해
+  // 히스토리가 어긋나지 않게 하고, 그 외엔 바로 목록으로 되돌린다.
+  const backToList = () => {
+    if (!isDesktop && Platform.OS === 'web' && typeof window !== 'undefined' && window.history) {
+      window.history.back(); // popstate → 오버레이 pop → setSelectedId(null)
+    } else {
+      setSelectedId(null);
+    }
+  };
 
   // 프로필 '메시지' → 1:1 대화 생성 후 바로 열기.
   useEffect(() => {
@@ -302,7 +324,7 @@ export default function DmScreen() {
     <View style={styles.thread}>
       <View style={styles.threadHeader}>
         {!isDesktop && (
-          <TouchableOpacity onPress={() => setSelectedId(null)} hitSlop={8} style={{ marginRight: spacing.xs }}>
+          <TouchableOpacity onPress={backToList} hitSlop={8} style={{ marginRight: spacing.xs }}>
             <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
         )}
@@ -381,6 +403,35 @@ export default function DmScreen() {
                 )}
                 <View style={{ maxWidth: '100%' }}>
                   {showName && <Text style={styles.senderName}>{sender?.name || 'PEED 유저'}</Text>}
+                  {/* 스토리 답장 — 무엇에 답한 건지 말풍선 위에 붙여 보여준다.
+                      스토리는 24시간 뒤 사라지지만 이 조각은 남는다. */}
+                  {m.bite ? (
+                    <View style={[styles.replyCard, mine ? styles.rowMe : styles.rowThem]}>
+                      {m.bite.image ? (
+                        <Image
+                          source={{ uri: m.bite.image }}
+                          style={styles.replyThumb}
+                          contentFit="cover"
+                        />
+                      ) : (
+                        <View style={[styles.replyThumb, styles.replyThumbEmpty]}>
+                          <Ionicons name="text" size={15} color={colors.textTertiary} />
+                        </View>
+                      )}
+                      <View style={styles.replyMeta}>
+                        <Text style={styles.replyLabel} numberOfLines={1}>
+                          {mine
+                            ? `${m.bite.authorName || '상대'}님의 바이트에 답장`
+                            : '내 바이트에 답장'}
+                        </Text>
+                        {m.bite.caption ? (
+                          <Text style={styles.replyCaption} numberOfLines={1}>
+                            {m.bite.caption}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                  ) : null}
                   {m.image ? (
                     <View style={[styles.bubbleImageWrap, mine ? styles.bubbleMe : styles.bubbleThem]}>
                       <Image source={{ uri: m.image }} style={styles.bubbleImage} contentFit="cover" />
@@ -673,6 +724,30 @@ const styles = StyleSheet.create({
   bubbleText: { fontSize: 15, lineHeight: 20, fontWeight: '600', color: colors.textPrimary },
   bubbleImageWrap: { padding: 3, borderRadius: radius.lg, overflow: 'hidden' },
   bubbleImage: { width: 210, height: 260, borderRadius: radius.md, backgroundColor: colors.surfaceAlt },
+
+  // 스토리 답장 머리 — 말풍선보다 한 톤 죽여서 답장 대상임이 드러나게.
+  replyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: 4,
+    paddingRight: spacing.sm,
+    paddingLeft: 3,
+    paddingVertical: 3,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+    maxWidth: 230,
+  },
+  replyThumb: {
+    width: 30,
+    height: 40,
+    borderRadius: 6,
+    backgroundColor: colors.surface,
+  },
+  replyThumbEmpty: { alignItems: 'center', justifyContent: 'center' },
+  replyMeta: { flexShrink: 1 },
+  replyLabel: { fontSize: 11, fontWeight: '800', color: colors.textSecondary },
+  replyCaption: { fontSize: 11.5, color: colors.textTertiary, marginTop: 1 },
 
   inputRow: {
     flexDirection: 'row',

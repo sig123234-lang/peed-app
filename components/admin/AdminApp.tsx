@@ -384,6 +384,7 @@ type Field = {
   label: string;
   type?: 'text' | 'number' | 'select' | 'image';
   options?: string[];
+  placeholder?: string;
 };
 
 const SCHEMAS: Record<
@@ -413,9 +414,10 @@ const SCHEMAS: Record<
       { key: 'price', label: '시가(원)', type: 'number' },
       { key: 'winners', label: '당첨 인원', type: 'number' },
       { key: 'stock', label: '응모 한도', type: 'number' },
+      { key: 'goLiveAt', label: '노출 시작일 (예약)', placeholder: '2026-08-01 · 비우면 즉시 노출' },
       { key: 'status', label: '상태', type: 'select', options: ['active', 'ended'] },
     ],
-    columns: ['image', 'name', 'pbCost', 'price', 'stock', 'status'],
+    columns: ['image', 'name', 'pbCost', 'price', 'goLiveAt', 'status'],
   },
   campaigns: {
     title: '슈퍼 버닝 캠페인',
@@ -486,15 +488,22 @@ const SCHEMAS: Record<
     title: '광고 관리',
     addLabel: '광고 등록',
     fields: [
-      { key: 'image', label: '배너 이미지', type: 'image' },
-      { key: 'title', label: '광고명' },
+      { key: 'image', label: '이미지 (배너·썸네일)', type: 'image' },
+      {
+        key: 'video',
+        label: '영상 URL (mp4, 선택)',
+        placeholder: 'https://... · 바이트 영상 광고용. 비우면 이미지로 노출',
+      },
+      { key: 'title', label: '광고명 (광고주 표시)' },
+      { key: 'body', label: '문구 (선택)', placeholder: '피드·바이트 광고에 함께 노출' },
       {
         key: 'placement',
         label: '노출 위치',
         type: 'select',
-        options: ['피드 상단', '버닝맵', '경품', '마이'],
+        options: ['피드 상단', '피드', '바이트', '버닝맵', '경품', '마이'],
       },
-      { key: 'link', label: '링크' },
+      { key: 'link', label: '링크 (클릭 시 새 창)' },
+      { key: 'ctaText', label: '버튼 문구 (선택)', placeholder: '자세히 보기' },
       { key: 'status', label: '상태', type: 'select', options: ['active', 'inactive'] },
       { key: 'startAt', label: '시작일' },
       { key: 'endAt', label: '종료일' },
@@ -539,7 +548,7 @@ const COLLECTION_SUB: Record<string, string> = {
   staff: '내부 직원 · 영업 담당은 매장 배정 시 이 목록에서 선택돼요',
   products: '경품 등록(사진 포함) · 응모 1회 = 설정 PB 차감 · 많이 모을수록 여러 번 응모',
   shipments: '당첨자 수여 · 배송 상태 · 송장 관리',
-  ads: '배너 광고 · 노출 위치 · 기간',
+  ads: '배너·피드·바이트(영상) 광고 · 노출 위치 · 기간 · 링크는 새 창',
   campaigns: '매장 모금 → 초대형 경품 슈퍼버닝 캠페인',
   reports: '허위·중복·신고 리뷰 검수 → PB 회수',
   notices: '앱 공지 · 푸시 알림',
@@ -707,7 +716,10 @@ function DashboardView({ onGo }: { onGo: (s: string) => void }) {
   const revenue = monthly;
   const prizeBudget = Math.round(revenue * PRIZE_BUDGET_RATE);
   const totalPb = members.reduce((s, m) => s + (Number(m.pb) || 0), 0);
-  const prizeValue = products.reduce((s, p) => s + (Number(p.price) || 0), 0);
+  const prizeValue = products
+    .filter((p) => p.status !== 'ended')
+    .reduce((s, p) => s + (Number(p.price) || 0), 0); // 등록된 경품 시가 = 지출
+  const prizeBudgetLeft = prizeBudget - prizeValue; // 남은 경품 예산 = 50% − 등록 시가
   const budgetUse = prizeBudget > 0 ? Math.min(1, prizeValue / prizeBudget) : 0;
   // Real monthly MRR: active stores whose contract date is on/before each month.
   const nowD = new Date();
@@ -733,7 +745,7 @@ function DashboardView({ onGo }: { onGo: (s: string) => void }) {
         <Kpi icon="people" label="총 회원" value={`${members.length}`} onPress={() => onGo('members')} />
         <Kpi icon="flame" label="버닝 매장" value={`${approved}`} onPress={() => onGo('burning')} />
         <Kpi icon="cash" label="이번 달 매출" value={won(revenue)} onPress={() => onGo('finance')} />
-        <Kpi icon="gift" label="경품 예산 (50%)" value={won(prizeBudget)} accent onPress={() => onGo('products')} />
+        <Kpi icon="gift" label="남은 경품 예산" value={won(prizeBudgetLeft)} accent onPress={() => onGo('products')} />
       </View>
 
       <View style={styles.card}>
@@ -1791,6 +1803,7 @@ function DealModal({
           region: d.region || p.region,
           address: d.roadAddress || d.address || p.address,
           contact: d.phone || p.contact,
+          hours: d.hours || p.hours,
           lat: d.lat || p.lat,
           lng: d.lng || p.lng,
           photos: d.photos && d.photos.length ? d.photos : p.photos,
@@ -1801,6 +1814,7 @@ function DealModal({
         }));
         const bits: string[] = [];
         if (d.name) bits.push('상호·주소');
+        if (d.hours) bits.push('운영시간');
         if (d.photos?.length) bits.push(`사진 ${d.photos.length}장`);
         if (d.menus?.length) bits.push(`메뉴 ${d.menus.length}개`);
         if (d.lat) bits.push('좌표');
@@ -1889,6 +1903,12 @@ function DealModal({
         </View>
       </View>
       <FormField label="주소" value={String(f.address ?? '')} onChange={(v) => set('address', v)} />
+      <FormField
+        label="운영시간"
+        value={String(f.hours ?? '')}
+        onChange={(v) => set('hours', v)}
+        placeholder="예: 매일 11:00 ~ 22:00 (네이버 불러오기 시 자동 입력)"
+      />
       <View style={styles.formRow}>
         <View style={{ flex: 1 }}>
           <FormField label="매장 담당자" value={String(f.ownerName ?? '')} onChange={(v) => set('ownerName', v)} />
@@ -2341,6 +2361,21 @@ function FinanceView() {
   const [modal, setModal] = useState(false);
   const [f, setF] = useState({ type: 'income', category: '', amount: '', memo: '', date: '' });
 
+  // 월별 조회 — 기본은 이번 달. 최근 12개월 중에서 고른다.
+  const curMonth = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  })();
+  const [month, setMonth] = useState<string>(curMonth);
+  const monthOptions = (() => {
+    const now = new Date();
+    return Array.from({ length: 12 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    });
+  })();
+  const eMonth = (e: any) => String(e?.date || '').slice(0, 7) || curMonth; // 날짜 없으면 이번 달로
+
   const refresh = async () => {
     const [l, a, c, p, sh, st] = await Promise.all([
       api('data?c=ledger').then((r) => r.json()).catch(() => ({})),
@@ -2361,19 +2396,32 @@ function FinanceView() {
     refresh();
   }, []);
 
-  const activeStores = apps.filter((a) => a.stage === '활성').length;
+  // 선택한 달 기준 — 그 달까지 계약된 활성 매장으로 구독 매출을 잡는다.
+  const activeStores = apps.filter(
+    (a) => a.stage === '활성' && (!a.contractDate || String(a.contractDate).slice(0, 7) <= month)
+  ).length;
   const subscriptionRev = activeStores * BURNING_MONTHLY_FEE;
   const campaignRev = campaigns
     .filter((c) => c.status !== '종료')
     .reduce((s, c) => s + (Number(c.stores) || 0) * (Number(c.feePerStore) || 0), 0);
-  const manualIncome = ledger.filter((e) => e.type === 'income').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const manualIncome = ledger
+    .filter((e) => e.type === 'income' && eMonth(e) === month)
+    .reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const totalIncome = subscriptionRev + campaignRev + manualIncome;
-  const prizeBudget = Math.round(subscriptionRev * PRIZE_BUDGET_RATE);
-  const opsExpense = ledger.filter((e) => e.type === 'expense').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const prizeBudget = Math.round(subscriptionRev * PRIZE_BUDGET_RATE); // 경품에 쓸 수 있는 총 예산(매출 50%)
+  // 경품 지출 = '등록된 상품'의 시가 합계. 매출의 50%를 무조건 빼지 않고, 실제
+  // 경품을 등록한 만큼만 지출로 잡는다(등록 시점에 그 시가가 지출이 된다).
+  const registeredValue = products
+    .filter((p) => p.status !== 'ended')
+    .reduce((s, p) => s + (Number(p.price) || 0), 0);
+  const prizeBudgetLeft = prizeBudget - registeredValue; // 남은 경품 예산 = 50% − 등록 시가
+  const opsExpense = ledger
+    .filter((e) => e.type === 'expense' && eMonth(e) === month)
+    .reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const payroll = staff
     .filter((s) => s.status !== '퇴사')
     .reduce((s, m) => s + (Number(m.salary) || 0), 0);
-  const totalCost = prizeBudget + opsExpense + payroll;
+  const totalCost = registeredValue + opsExpense + payroll;
   const net = totalIncome - totalCost;
   const expense = opsExpense;
 
@@ -2393,11 +2441,9 @@ function FinanceView() {
   products.forEach((p) => (priceByName[p.name] = Number(p.price) || 0));
   const prizeOut = shipments.reduce((s, sh) => s + (priceByName[sh.product] || 0), 0);
   const prizeAwardedN = shipments.length;
-  const poolRemaining = prizeBudget - prizeOut;
-  const poolUse = prizeBudget > 0 ? Math.min(1, prizeOut / prizeBudget) : 0;
-  const registeredValue = products
-    .filter((p) => p.status !== 'ended')
-    .reduce((s, p) => s + (Number(p.price) || 0), 0);
+  // 소진·잔여는 '등록된 경품 시가' 기준(= 지출 기준).
+  const poolRemaining = prizeBudgetLeft;
+  const poolUse = prizeBudget > 0 ? Math.min(1, registeredValue / prizeBudget) : 0;
 
   const add = async () => {
     if (!f.amount || !f.category) return;
@@ -2430,7 +2476,12 @@ function FinanceView() {
       <View style={styles.h1Row}>
         <View style={{ flex: 1 }}>
           <Text style={styles.h1}>매출 · 지출 (P&L)</Text>
-          <Text style={styles.sectionSub}>구독·캠페인 매출 − 경품(50%) − 인건비 − 운영비 = 순이익</Text>
+          <Text style={styles.sectionSub}>
+            {month === curMonth ? '이번 달' : month} · 구독·캠페인 매출 − 경품(등록 시가) − 인건비 − 운영비 = 순이익
+          </Text>
+        </View>
+        <View style={{ width: 150, marginRight: spacing.sm }}>
+          <Dropdown label="조회 월" value={month} options={monthOptions} onChange={setMonth} />
         </View>
         <TouchableOpacity style={styles.addBtn} onPress={() => setModal(true)}>
           <Ionicons name="add" size={18} color={colors.white} />
@@ -2440,7 +2491,7 @@ function FinanceView() {
 
       <View style={styles.kpiRow}>
         <Kpi icon="cash" label="총 매출" value={won(totalIncome)} />
-        <Kpi icon="gift" label="경품 투입 (50%)" value={won(prizeBudget)} accent />
+        <Kpi icon="gift" label="경품 투입 (등록 시가)" value={won(registeredValue)} accent />
         <Kpi icon="people" label="인건비 (급여)" value={won(payroll)} />
         <Kpi icon="trending-up" label="순이익" value={won(net)} />
       </View>
@@ -2451,13 +2502,13 @@ function FinanceView() {
         <PLRow label="슈퍼버닝 캠페인" value={campaignRev} />
         <PLRow label="기타 매출" value={manualIncome} />
         <PLRow label="총 매출" value={totalIncome} total />
-        <PLRow label="경품 투입 (매출의 50%)" value={-prizeBudget} />
+        <PLRow label="경품 투입 (등록 상품 시가)" value={-registeredValue} />
         <PLRow label="인건비 (재직 직원 급여)" value={-payroll} />
         <PLRow label="운영비 (수동)" value={-opsExpense} />
         <PLRow label="순이익" value={net} total accent={net < 0} />
       </View>
 
-      <Text style={styles.h2}>경품 풀 회계 (50% 룰)</Text>
+      <Text style={styles.h2}>경품 예산 · 지출 (예산 50% · 등록 시가 지출)</Text>
       <View style={styles.dashRow}>
         <View style={styles.dashCardLg}>
           <View style={styles.cardHead}>
@@ -2472,15 +2523,15 @@ function FinanceView() {
               ]}
             />
           </View>
-          <PLRow label="모금액 (구독 매출)" value={subscriptionRev} />
-          <PLRow label="경품 예산 (50%)" value={prizeBudget} total />
-          <PLRow label={`경품 수여 지출 · ${prizeAwardedN}건`} value={-prizeOut} />
+          <PLRow label="경품 예산 (매출의 50%)" value={prizeBudget} total />
+          <PLRow label={`등록 상품 시가 (지출) · ${products.filter((p) => p.status !== 'ended').length}종`} value={-registeredValue} />
           <PLRow
-            label={poolRemaining >= 0 ? '잔여 예산' : '예산 초과'}
+            label={poolRemaining >= 0 ? '남은 경품 예산' : '예산 초과'}
             value={poolRemaining}
             total
             accent={poolRemaining < 0}
           />
+          <PLRow label={`(참고) 수여 완료 · ${prizeAwardedN}건`} value={-prizeOut} />
         </View>
         <View style={styles.dashCardSm}>
           <Text style={styles.cardTitle}>등록 경품 시가</Text>
@@ -2561,9 +2612,9 @@ function FinanceView() {
         </View>
       ) : null}
 
-      <Text style={styles.h2}>수동 내역</Text>
-      {ledger.length === 0 ? (
-        <Empty text="등록된 내역이 없어요." />
+      <Text style={styles.h2}>수동 내역 · {month === curMonth ? '이번 달' : month}</Text>
+      {ledger.filter((e) => eMonth(e) === month).length === 0 ? (
+        <Empty text="이 달에 등록된 내역이 없어요." />
       ) : (
         <View style={styles.table}>
           <View style={[styles.tr, styles.trHead]}>
@@ -2573,7 +2624,7 @@ function FinanceView() {
             <Text style={[styles.th, { flex: 1.5, textAlign: 'right' }]}>금액</Text>
             <Text style={[styles.th, { width: 44 }]}> </Text>
           </View>
-          {ledger.map((e) => (
+          {ledger.filter((e) => eMonth(e) === month).map((e) => (
             <View key={e.id} style={styles.tr}>
               <Text style={[styles.td, { flex: 1, color: e.type === 'income' ? colors.primary : colors.coral, fontWeight: '600' }]}>
                 {e.type === 'income' ? '매출' : '지출'}
@@ -5591,6 +5642,7 @@ function EditModal({
             value={String(form[fl.key] ?? '')}
             onChange={(v) => set(fl.key, v)}
             numeric={fl.type === 'number'}
+            placeholder={fl.placeholder}
           />
         )
       )}

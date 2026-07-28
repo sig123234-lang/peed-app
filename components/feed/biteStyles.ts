@@ -17,7 +17,13 @@ export function filterFor(key?: string): BiteFilter {
   return BITE_FILTERS.find((f) => f.key === key) ?? BITE_FILTERS[0];
 }
 
-// Gradient backgrounds for photo-less (text) stories.
+// 스토리 배경 — 사진 뒤에 깔리고, 사진이 없으면 그 자체가 화면이 된다.
+// 두 색이 같으면 단색으로 보인다(그라디언트 컴포넌트 하나로 둘 다 그린다).
+//
+// 앞쪽은 그라디언트, 뒤쪽은 단색. 사진을 얹을 땐 배경이 튀지 않는 단색이 사진을
+// 살려주고, 글만 있는 스토리엔 그라디언트가 허전하지 않다.
+const solid = (c: string): string[] => [c, c];
+
 export const BITE_BACKGROUNDS: string[][] = [
   ['#6C5CE7', '#4F6BFF'],
   ['#FF7A7A', '#FF5A5A'],
@@ -25,6 +31,16 @@ export const BITE_BACKGROUNDS: string[][] = [
   ['#00C2FF', '#4F6BFF'],
   ['#FF8AC2', '#FF6B6B'],
   ['#12141C', '#3A3F52'],
+  solid('#FFFFFF'),
+  solid('#F2F3F7'),
+  solid('#111318'),
+  solid('#4F6BFF'),
+  solid('#FF5A5A'),
+  solid('#FFB020'),
+  solid('#22C55E'),
+  solid('#C6F432'),
+  solid('#FF8AC2'),
+  solid('#6C5CE7'),
 ];
 
 export const TEXT_COLORS = [

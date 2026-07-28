@@ -2,8 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useState } from 'react';
-import { Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { CommentsSheet } from '@/components/feed/CommentsSheet';
 import { Post, useFeed } from '@/context/feed';
 import { useShell } from '@/context/shell';
 import { colors, gradients, mono, radius, shadow, spacing } from '@/theme';
@@ -156,20 +157,12 @@ function ReportSheet({
 }
 
 export function PostCard({ post }: { post: Post }) {
-  const { toggleSave, toggleFollow, addComment } = useFeed();
+  const { toggleSave, toggleFollow } = useFeed();
   const { viewUser } = useShell();
   const { author } = post;
   const showFollow = !author.isMe;
   const [commentsOpen, setCommentsOpen] = useState(false);
-  const [draft, setDraft] = useState('');
   const [reportOpen, setReportOpen] = useState(false);
-
-  const submitComment = () => {
-    const t = draft.trim();
-    if (!t) return;
-    addComment(post.id, t);
-    setDraft('');
-  };
 
   return (
     <View style={[styles.card, post.isBurning && styles.cardBurning]}>
@@ -249,8 +242,15 @@ export function PostCard({ post }: { post: Post }) {
         postId={post.id}
       />
 
-      {/* the dish */}
-      <Image source={post.image} style={styles.photo} contentFit="cover" />
+      {/* the dish — 이용 사진은 선택이라 없을 수 있다 */}
+      {post.image ? (
+        <Image source={post.image} style={styles.photo} contentFit="cover" />
+      ) : (
+        <View style={styles.noPhoto}>
+          <Ionicons name="reader-outline" size={18} color={colors.textTertiary} />
+          <Text style={styles.noPhotoText}>사진 없이 남긴 리뷰</Text>
+        </View>
+      )}
 
       {/* caption */}
       <View style={styles.captionWrap}>
@@ -307,52 +307,12 @@ export function PostCard({ post }: { post: Post }) {
         </TouchableOpacity>
       </View>
 
-      {/* comments */}
-      <Modal
+      {/* comments — 리치 UI + @멘션은 별도 컴포넌트로 분리 */}
+      <CommentsSheet
+        post={post}
         visible={commentsOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setCommentsOpen(false)}
-      >
-        <TouchableOpacity
-          style={styles.cmBackdrop}
-          activeOpacity={1}
-          onPress={() => setCommentsOpen(false)}
-        >
-          <TouchableOpacity style={styles.cmSheet} activeOpacity={1}>
-            <View style={styles.cmHandle} />
-            <Text style={styles.cmTitle}>댓글 {post.comments.length}</Text>
-
-            <View style={styles.cmList}>
-              {post.comments.length === 0 ? (
-                <Text style={styles.cmEmpty}>첫 댓글을 남겨보세요!</Text>
-              ) : (
-                post.comments.map((c) => (
-                  <View key={c.id} style={styles.cmRow}>
-                    <Text style={styles.cmUser}>{c.userName}</Text>
-                    <Text style={styles.cmText}>{c.text}</Text>
-                  </View>
-                ))
-              )}
-            </View>
-
-            <View style={styles.cmInputRow}>
-              <TextInput
-                value={draft}
-                onChangeText={setDraft}
-                placeholder="댓글 달기…"
-                placeholderTextColor={colors.textTertiary}
-                style={styles.cmInput}
-                onSubmitEditing={submitComment}
-                returnKeyType="send"
-              />
-              <TouchableOpacity onPress={submitComment} style={styles.cmSend} activeOpacity={0.8}>
-                <Ionicons name="arrow-up" size={18} color={colors.white} />
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+        onClose={() => setCommentsOpen(false)}
+      />
     </View>
   );
 }
@@ -566,6 +526,27 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceAlt,
     marginBottom: spacing.md,
   },
+  // 이용 사진이 없는 글 — 사진 자리를 비우지 않고 얇은 띠로 채워 카드 리듬을 지킨다.
+  noPhoto: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginHorizontal: CARD_PAD,
+    marginBottom: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.lineStrong,
+    backgroundColor: 'rgba(0,0,0,0.015)',
+  },
+  noPhotoText: {
+    fontFamily: mono,
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: colors.textTertiary,
+  },
 
   /* caption */
   captionWrap: {
@@ -705,90 +686,5 @@ const styles = StyleSheet.create({
   },
   saveTextActive: {
     color: colors.white,
-  },
-
-  /* comments modal */
-  cmBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15,18,34,0.45)',
-    justifyContent: 'flex-end',
-  },
-  cmSheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing['2xl'],
-    maxHeight: '75%',
-  },
-  cmHandle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.lineStrong,
-    marginBottom: spacing.md,
-  },
-  cmTitle: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: colors.textPrimary,
-    marginBottom: spacing.md,
-  },
-  cmList: {
-    gap: spacing.md,
-    paddingBottom: spacing.md,
-  },
-  cmEmpty: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textTertiary,
-    textAlign: 'center',
-    paddingVertical: spacing.xl,
-  },
-  cmRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    alignItems: 'flex-start',
-  },
-  cmUser: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  cmText: {
-    flex: 1,
-    fontSize: 13.5,
-    fontWeight: '500',
-    color: colors.textSecondary,
-    lineHeight: 19,
-  },
-  cmInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-    paddingTop: spacing.md,
-  },
-  cmInput: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  cmSend: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });

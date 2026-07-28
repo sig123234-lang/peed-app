@@ -18,12 +18,22 @@ import { imageUriToDataUrl, initialAvatar } from './feed';
 const POLL_MS = 2000; // 화면을 보고 있을 때
 const POLL_MS_HIDDEN = 15000; // 탭이 가려져 있을 때
 
+// 스토리 답장에 딸려오는 원본 조각 — 서버가 그때 모습을 베껴 넣어준다.
+// 스토리가 사라진 뒤에도 무엇에 답한 건지 남아야 하기 때문이다.
+export type DmBiteRef = {
+  id: string;
+  image: string;
+  caption: string;
+  authorName: string;
+};
+
 export type DmMessage = {
   id: string;
   from: string;
   fromMe: boolean;
   text: string;
   image?: string;
+  bite?: DmBiteRef; // 스토리에 답장한 메시지에만 붙는다
   ts: number;
 };
 export type DmMember = { id: string; name: string; handle: string; avatar: any };
@@ -46,6 +56,9 @@ type DmValue = {
   sendImage: (id: string, uri: string) => void;
   markRead: (id: string) => void;
   startDirect: (uid: string) => Promise<string | null>;
+  // 스토리 답장 — 작성자와의 1:1 대화(없으면 새로 열림)로 글을 보낸다.
+  // 스토리가 이미 사라졌으면 false.
+  replyToBite: (biteId: string, text: string) => Promise<boolean>;
   createGroup: (memberIds: string[], title: string) => Promise<string | null>;
   refresh: () => void;
   askNotifyPermission: () => void;
@@ -95,6 +108,7 @@ function rowToMsg(row: any, myId: string): DmMessage {
     fromMe: row.from_user === myId,
     text: row.body || '',
     image: row.image || undefined,
+    bite: row.bite || undefined,
     ts: new Date(row.created_at).getTime(),
   };
 }
@@ -385,6 +399,28 @@ export function DmProvider({ children }: { children: React.ReactNode }) {
     [refresh]
   );
 
+  const replyToBite = useCallback(
+    async (biteId: string, text: string): Promise<boolean> => {
+      const t = text.trim();
+      if (!isWeb() || !biteId || !t) return false;
+      askNotifyPermission(); // 답장도 전송이라 알림 권한을 물어볼 자리
+      try {
+        const d = await postJSON('biteReply', { biteId, text: t });
+        if (!d?.ok || !d.conversationId || !d.message) return false;
+        const real = rowToMsg(d.message, myIdRef.current);
+        setMessages((prev) => {
+          const arr = (prev[d.conversationId] || []).filter((m) => m.id !== real.id);
+          return { ...prev, [d.conversationId]: [...arr, real] };
+        });
+        await refresh(); // 처음 답장이면 대화방이 새로 생기므로 목록을 다시 받는다
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [refresh, askNotifyPermission]
+  );
+
   const createGroup = useCallback(
     async (memberIds: string[], title: string): Promise<string | null> => {
       if (!isWeb() || memberIds.length < 2) return null;
@@ -417,12 +453,13 @@ export function DmProvider({ children }: { children: React.ReactNode }) {
       sendImage,
       markRead,
       startDirect,
+      replyToBite,
       createGroup,
       refresh,
       askNotifyPermission,
       totalUnread,
     }),
-    [conversations, messages, myId, openConversation, sendMessage, sendImage, markRead, startDirect, createGroup, refresh, askNotifyPermission, totalUnread]
+    [conversations, messages, myId, openConversation, sendMessage, sendImage, markRead, startDirect, replyToBite, createGroup, refresh, askNotifyPermission, totalUnread]
   );
   return <DmContext.Provider value={value}>{children}</DmContext.Provider>;
 }

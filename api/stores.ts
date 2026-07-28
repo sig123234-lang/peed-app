@@ -19,6 +19,7 @@ export default async function handler(_req: any, res: any) {
         image: s.image || (Array.isArray(s.photos) ? s.photos[0] : '') || '',
         photos: Array.isArray(s.photos) ? s.photos.slice(0, 8) : [],
         phone: s.contact || '',
+        hours: s.hours || '',
         menus: Array.isArray(s.menus) ? s.menus.slice(0, 40) : [],
       }));
     res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=300');

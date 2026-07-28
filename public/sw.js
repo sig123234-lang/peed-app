@@ -21,8 +21,13 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'PEED';
   const options = {
     body: data.body || '',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
+    // 왼쪽 동그라미 = badge(알림 아이콘). 투명 배경 + 흰색 PEED 워드마크라
+    // 안드로이드가 흑백 실루엣으로 처리해도 로고가 그대로 보인다.
+    // (예전엔 icon-192.png 를 badge 로 써서 투명영역이 없어 흰 덩어리로 나왔다.)
+    badge: '/badge.png',
+    // icon(오른쪽 큰 썸네일)은 일부러 뺀다 — 왼쪽 로고 하나로 정리.
+    // 다시 오른쪽에 로고를 띄우려면 아래 줄 주석을 풀면 된다.
+    // icon: '/icon-192.png',
     // 같은 tag 는 하나로 합쳐진다(메시지 도배 방지). 당첨은 매번 따로 보이게 한다.
     tag: data.tag || 'peed',
     renotify: data.tag === 'raffle',

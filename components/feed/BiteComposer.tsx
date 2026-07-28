@@ -5,6 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -32,6 +33,17 @@ import { useShell } from '@/context/shell';
 import { colors, radius, spacing } from '@/theme';
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+// 사진 크기 한계 — 화면 한 귀퉁이만 차지할 만큼 줄이거나 크게 키울 수 있다.
+const MIN_SCALE = 0.2;
+const MAX_SCALE = 5;
+
+// 저장된 배경색 → 팔레트에서의 위치. 못 찾으면 첫 번째.
+function bgIndexOf(bg?: string[]): number {
+  if (!bg || bg.length < 2) return 0;
+  const i = BITE_BACKGROUNDS.findIndex((g) => g[0] === bg[0] && g[1] === bg[1]);
+  return i >= 0 ? i : 0;
+}
 const SIZES = [26, 38, 54]; // 텍스트 S / M / L
 
 type Panel = 'sticker' | 'bg' | 'filter' | null;
@@ -39,8 +51,11 @@ type Panel = 'sticker' | 'bg' | 'filter' | null;
 // 인스타그램 스토리 방식 — 세로 풀스크린 캔버스 위에 도구를 얹는다.
 // 흐름: 배경(사진 또는 색) → Aa/스티커로 꾸미기(드래그 배치) → 스토리 올리기.
 export function BiteComposer() {
-  const { biteComposer, closeBiteComposer } = useShell();
-  const { addBite, posts } = useFeed();
+  const { biteComposer, biteEditId, closeBiteComposer } = useShell();
+  const { addBite, editBite, bites, posts } = useFeed();
+
+  // 수정 모드면 그 스토리를 불러와 캔버스를 그대로 재현한다.
+  const editing = biteEditId ? bites.find((b) => b.id === biteEditId) ?? null : null;
   const { width: rawW, height: rawH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
@@ -117,33 +132,56 @@ export function BiteComposer() {
   const seq = useRef(0);
   const [, force] = useReducer((c) => c + 1, 0);
 
-  // 배경 사진 확대/이동(핀치 줌 + 팬).
-  const img = useRef({ scale: 1, tx: 0, ty: 0 });
-  const imgStart = useRef({ scale: 1, tx: 0, ty: 0, dist: 0 });
+  // 열릴 때 한 번만 읽는 값이라 ref 로 들고 간다. 상태로 두면 목록이 새로고침될
+  // 때마다 초기화 effect 가 다시 돌아 편집 중인 내용을 날린다.
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  // 캔버스 크기가 정해지기 전까지 들고 있는 저장된 배치(비율).
+  const pendingFit = useRef<{ x: number; y: number } | null>(null);
+  const [canvasTick, bumpCanvas] = useReducer((c) => c + 1, 0);
+
+  // 사진 배치 — 확대/축소·이동·회전. 사진은 배경에 갇힌 게 아니라 배경 위에
+  // 얹힌 물체라 프레임 밖으로 나가도 되고, 줄이면 뒤 배경이 드러난다. 그래서
+  // 이동량을 가두지 않는다(예전엔 빈 곳이 생기지 않게 조였다).
+  const img = useRef({ scale: 1, tx: 0, ty: 0, rot: 0 });
+  const imgStart = useRef({ scale: 1, tx: 0, ty: 0, rot: 0, dist: 0, angle: 0 });
+
+  // 두 손가락 사이의 거리와 각도 — 벌리면 확대, 비틀면 회전.
+  const twoFinger = (touches: any[]) => {
+    const dx = touches[0].pageX - touches[1].pageX;
+    const dy = touches[0].pageY - touches[1].pageY;
+    return {
+      dist: Math.hypot(dx, dy) || 1,
+      angle: (Math.atan2(dy, dx) * 180) / Math.PI,
+    };
+  };
+
   const bgResp = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
-        imgStart.current = { ...img.current, dist: 0 };
+        imgStart.current = { ...img.current, dist: 0, angle: 0 };
       },
       onPanResponderMove: (evt, g) => {
         const touches = evt.nativeEvent.touches;
-        const { w, h } = canvas.current;
         if (touches && touches.length >= 2) {
-          const dx = touches[0].pageX - touches[1].pageX;
-          const dy = touches[0].pageY - touches[1].pageY;
-          const dist = Math.hypot(dx, dy) || 1;
-          if (imgStart.current.dist === 0) imgStart.current.dist = dist;
-          img.current.scale = clamp((imgStart.current.scale * dist) / imgStart.current.dist, 1, 4);
+          const { dist, angle } = twoFinger(touches as any);
+          // 두 손가락이 닿은 순간을 기준으로 잡아야 튀지 않는다.
+          if (imgStart.current.dist === 0) {
+            imgStart.current.dist = dist;
+            imgStart.current.angle = angle;
+          }
+          img.current.scale = clamp(
+            (imgStart.current.scale * dist) / imgStart.current.dist,
+            MIN_SCALE,
+            MAX_SCALE
+          );
+          img.current.rot = imgStart.current.rot + (angle - imgStart.current.angle);
         } else {
           img.current.tx = imgStart.current.tx + g.dx;
           img.current.ty = imgStart.current.ty + g.dy;
         }
-        const maxX = ((img.current.scale - 1) * w) / 2;
-        const maxY = ((img.current.scale - 1) * h) / 2;
-        img.current.tx = clamp(img.current.tx, -maxX, maxX);
-        img.current.ty = clamp(img.current.ty, -maxY, maxY);
         force();
       },
       onPanResponderRelease: (_e, g) => {
@@ -156,13 +194,35 @@ export function BiteComposer() {
     })
   ).current;
 
+  // 데스크톱 웹엔 두 손가락이 없다 — 휠로 확대/축소, Shift+휠로 회전.
+  // 이동은 PanResponder 가 마우스 드래그로 처리한다.
+  const onWheel = (e: any) => {
+    e?.preventDefault?.();
+    const down = Number(e?.deltaY) > 0;
+    if (e?.shiftKey) img.current.rot += down ? -5 : 5;
+    else img.current.scale = clamp(img.current.scale * (down ? 0.94 : 1.06), MIN_SCALE, MAX_SCALE);
+    force();
+  };
+
+  // 배치를 처음 상태로.
+  const resetFit = () => {
+    img.current = { scale: 1, tx: 0, ty: 0, rot: 0 };
+    force();
+  };
+  const isDefaultFit =
+    img.current.scale === 1 &&
+    img.current.tx === 0 &&
+    img.current.ty === 0 &&
+    img.current.rot === 0;
+
   useEffect(() => {
     if (biteComposer) {
-      setImage(null);
-      setCaption('');
-      setOverlays([]);
-      setFilterKey('none');
-      setBgIndex(0);
+      // 수정 모드면 원래 값으로, 아니면 빈 캔버스로 시작한다.
+      setImage(editingRef.current?.image?.uri ?? null);
+      setCaption(editingRef.current?.caption ?? '');
+      setOverlays(editingRef.current?.overlays ?? []);
+      setFilterKey(editingRef.current?.filter ?? 'none');
+      setBgIndex(bgIndexOf(editingRef.current?.bg));
       setActiveId(null);
       setPanel(null);
       setEditorOpen(false);
@@ -175,15 +235,33 @@ export function BiteComposer() {
       setTextHL(false);
       setIsMention(false);
       setDragging(false);
-      setAudience('all');
+      setAudience(editingRef.current?.audience ?? 'all');
       setCloseFriends(new Set());
       setFriendsOpen(false);
       live.current = {};
       liveSize.current = {};
       resp.current = {};
-      img.current = { scale: 1, tx: 0, ty: 0 };
+      // 저장된 구도는 비율이라 캔버스 픽셀로 되돌려야 화면에 같게 보인다.
+      // 캔버스 크기는 onLayout 뒤에야 정해지므로 여기선 비율만 들고 있다가
+      // 아래 effect 에서 픽셀로 환산한다.
+      const f = editingRef.current?.fit;
+      img.current = { scale: f?.scale ?? 1, tx: 0, ty: 0, rot: f?.rotate ?? 0 };
+      pendingFit.current = f ? { x: f.x, y: f.y } : null;
     }
   }, [biteComposer]);
+
+  // 캔버스 크기가 잡히면 저장된 배치(비율)를 픽셀 이동량으로 환산해 얹는다.
+  useEffect(() => {
+    if (!biteComposer) return;
+    const f = pendingFit.current;
+    if (!f) return;
+    const { w, h } = canvas.current;
+    if (!w || !h) return;
+    img.current.tx = f.x * w;
+    img.current.ty = f.y * h;
+    pendingFit.current = null;
+    force();
+  }, [biteComposer, canvasTick]);
 
   // 편집기가 열려 있는 동안엔 당겨서 새로고침 잠금(오버레이 드래그와 충돌 방지).
   useEffect(() => {
@@ -207,7 +285,7 @@ export function BiteComposer() {
     });
     if (!res.canceled) {
       setImage(res.assets[0].uri);
-      img.current = { scale: 1, tx: 0, ty: 0 };
+      img.current = { scale: 1, tx: 0, ty: 0, rot: 0 };
       setPanel(null);
     }
   };
@@ -432,14 +510,38 @@ export function BiteComposer() {
 
   const publish = () => {
     if (!image && overlays.length === 0) return;
-    addBite({
-      image: image ? { uri: image } : undefined,
-      caption: caption.trim(),
-      overlays,
-      filter: filterKey,
-      bg: image ? undefined : BITE_BACKGROUNDS[bgIndex],
-      audience,
-    });
+    // 확대/이동은 캔버스 픽셀 단위라 그대로 두면 뷰어 크기에서 어긋난다.
+    // 캔버스 크기로 나눠 비율로 넘긴다.
+    const { w, h } = canvas.current;
+    const { scale, tx, ty, rot } = img.current;
+    const fit = image
+      ? { scale, x: tx / (w || 1), y: ty / (h || 1), rotate: ((rot % 360) + 360) % 360 }
+      : undefined;
+    // 배경은 사진이 있어도 함께 저장한다 — 사진을 줄이면 뒤로 드러나기 때문.
+    const bg = BITE_BACKGROUNDS[bgIndex];
+
+    if (editing) {
+      editBite(editing.id, {
+        // 사진을 그대로 두면 서버 URL 이라 editBite 가 알아서 건드리지 않는다.
+        image: image ? { uri: image } : undefined,
+        caption: caption.trim(),
+        overlays,
+        filter: filterKey,
+        bg,
+        fit: fit ?? null, // null = 구도를 기본으로 되돌림
+        audience,
+      });
+    } else {
+      addBite({
+        image: image ? { uri: image } : undefined,
+        caption: caption.trim(),
+        overlays,
+        filter: filterKey,
+        bg,
+        fit,
+        audience,
+      });
+    }
     closeBiteComposer();
   };
 
@@ -451,11 +553,21 @@ export function BiteComposer() {
     <View style={[styles.root, { paddingVertical: fill ? 0 : 20 }]}>
       <View
         style={[styles.stage, { width: STAGE_W, height: STAGE_H, borderRadius: stageRadius }]}
-        onLayout={(e) =>
-          (canvas.current = { w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })
-        }
+        onLayout={(e) => {
+          canvas.current = { w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height };
+          bumpCanvas(); // 저장된 구도를 얹는 effect 를 깨운다
+        }}
       >
-        {/* background */}
+        {/* 배경은 사진이 있든 없든 항상 깔린다 — 사진을 줄이거나 돌리면
+            그 틈으로 이 배경이 드러난다. */}
+        <LinearGradient
+          colors={BITE_BACKGROUNDS[bgIndex] as [string, string]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        {/* 사진 — 원본 비율 그대로(contain) 얹고 확대·이동·회전을 적용한다.
+            cover 로 깔면 줄였을 때 잘린 채로 작아져 원본이 안 보인다. */}
         {image ? (
           <Image
             source={{ uri: image }}
@@ -465,27 +577,25 @@ export function BiteComposer() {
                 transform: [
                   { translateX: img.current.tx },
                   { translateY: img.current.ty },
+                  { rotate: `${img.current.rot}deg` },
                   { scale: img.current.scale },
                 ],
               },
             ]}
-            contentFit="cover"
+            contentFit="contain"
           />
-        ) : (
-          <LinearGradient
-            colors={BITE_BACKGROUNDS[bgIndex] as [string, string]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-        )}
+        ) : null}
         {flt.opacity > 0 && (
           <View style={[StyleSheet.absoluteFill, { backgroundColor: flt.color, opacity: flt.opacity }]} />
         )}
 
         {/* 배경 제스처: 사진이면 핀치 줌/이동, 아니면 탭으로 선택 해제 */}
         {image ? (
-          <View style={StyleSheet.absoluteFill} {...bgResp.panHandlers} />
+          <View
+            style={StyleSheet.absoluteFill}
+            {...bgResp.panHandlers}
+            {...(Platform.OS === 'web' ? ({ onWheel } as any) : null)}
+          />
         ) : (
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setActiveId(null)} />
         )}
@@ -588,14 +698,14 @@ export function BiteComposer() {
                   active={panel === 'sticker'}
                   onPress={() => setPanel(panel === 'sticker' ? null : 'sticker')}
                 />
-                {!image && (
-                  <RailTool
-                    icon="color-palette"
-                    label="배경"
-                    active={panel === 'bg'}
-                    onPress={() => setPanel(panel === 'bg' ? null : 'bg')}
-                  />
-                )}
+                {/* 사진이 있어도 필요하다 — 사진 뒤에 깔리는 배경이라 사진을
+                    줄이거나 돌리면 이 색이 드러난다. */}
+                <RailTool
+                  icon="color-palette"
+                  label="배경"
+                  active={panel === 'bg'}
+                  onPress={() => setPanel(panel === 'bg' ? null : 'bg')}
+                />
                 <RailTool
                   icon="color-filter"
                   label="필터"
@@ -639,7 +749,8 @@ export function BiteComposer() {
                     </View>
                   </ScrollView>
                 )}
-                {panel === 'bg' && !image && (
+                {/* 사진이 있어도 고를 수 있다 — 사진 뒤에 깔리는 배경이므로 */}
+                {panel === 'bg' && (
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     <View style={styles.rowGap}>
                       {BITE_BACKGROUNDS.map((g, i) => (
@@ -650,6 +761,13 @@ export function BiteComposer() {
                             end={{ x: 1, y: 1 }}
                             style={[styles.bgSwatch, bgIndex === i && styles.bgSwatchOn]}
                           />
+                          {/* 흰 배경에선 흰 테두리가 안 보인다 — 어두운 원 안의
+                              체크로 어느 색이든 선택이 드러나게 한다. */}
+                          {bgIndex === i && (
+                            <View style={styles.bgSwatchCheck} pointerEvents="none">
+                              <Ionicons name="checkmark" size={13} color="#fff" />
+                            </View>
+                          )}
                         </TouchableOpacity>
                       ))}
                     </View>
@@ -698,7 +816,12 @@ export function BiteComposer() {
                   end={{ x: 1, y: 1 }}
                   style={styles.shareBtn}
                 >
-                  <Ionicons name="arrow-forward" size={22} color="#fff" />
+                  {/* 수정 모드는 '보내기'가 아니라 '저장'이라 체크로 바꾼다 */}
+                  <Ionicons
+                    name={editing ? 'checkmark' : 'arrow-forward'}
+                    size={22}
+                    color="#fff"
+                  />
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -707,6 +830,27 @@ export function BiteComposer() {
               <Text style={[styles.dragHint, { top: topPad + 52 }]} pointerEvents="none">
                 드래그로 이동 · 모서리로 크기 · 탭하면 편집 · 아래로 끌면 삭제
               </Text>
+            )}
+
+            {/* 사진 조작 안내 — 스티커를 고르고 있을 땐 위 안내와 겹치니 숨긴다 */}
+            {image && !activeId && !panel && (
+              <Text style={[styles.dragHint, { top: topPad + 52 }]} pointerEvents="none">
+                {Platform.OS === 'web'
+                  ? '드래그로 이동 · 휠로 크기 · Shift+휠로 회전'
+                  : '드래그로 이동 · 두 손가락으로 크기와 회전'}
+              </Text>
+            )}
+
+            {/* 배치를 건드린 뒤에만 되돌리기 버튼을 띄운다 */}
+            {image && !activeId && !panel && !isDefaultFit && (
+              <TouchableOpacity
+                style={[styles.resetFitBtn, { top: topPad + 84 }]}
+                onPress={resetFit}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="refresh" size={14} color="#fff" />
+                <Text style={styles.resetFitText}>사진 배치 초기화</Text>
+              </TouchableOpacity>
             )}
 
             {/* 받는 사람 선택 시트 */}
@@ -1057,6 +1201,23 @@ const styles = StyleSheet.create({
     ...({ textShadow: '0 1px 4px rgba(0,0,0,0.6)' } as object),
   },
 
+  resetFitBtn: {
+    position: 'absolute',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  resetFitText: {
+    color: '#fff',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+
   panel: {
     position: 'absolute',
     left: spacing.md,
@@ -1101,6 +1262,17 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.25)',
   },
   bgSwatchOn: { borderColor: '#fff' },
+  bgSwatchCheck: {
+    position: 'absolute',
+    right: 3,
+    bottom: 3,
+    width: 19,
+    height: 19,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.62)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   bottomBar: {
     position: 'absolute',

@@ -34,7 +34,8 @@ type ShellValue = {
   // Bites (story-style quick posts): a fullscreen composer + viewer, both
   // registered as overlays so the back button closes them.
   biteComposer: boolean;
-  openBiteComposer: () => void;
+  biteEditId: string | null; // 값이 있으면 새로 올리기가 아니라 그 스토리 고치기
+  openBiteComposer: (biteId?: string) => void;
   closeBiteComposer: () => void;
   biteViewerId: string | null;
   openBiteViewer: (id: string) => void;
@@ -86,6 +87,7 @@ export function ShellProvider({ children }: { children: React.ReactNode }) {
   const [showReview, setShowReviewState] = useState(false);
   const [detailStore, setDetailStore] = useState<ReservableStore | null>(null);
   const [biteComposer, setBiteComposer] = useState(false);
+  const [biteEditId, setBiteEditId] = useState<string | null>(null);
   const [biteViewerId, setBiteViewerId] = useState<string | null>(null);
   const [infoSheet, setInfoSheet] = useState<InfoKey | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -112,6 +114,27 @@ export function ShellProvider({ children }: { children: React.ReactNode }) {
       }
     })();
   }, []);
+
+  // 새로고침해도 보던 탭에 남는다 — 현재 탭을 세션에 저장해 두고, 다시 뜰 때 복원.
+  // (앱은 URL이 아니라 탭 상태로 화면을 바꾸므로, 저장 안 하면 새로고침마다 홈으로 튄다.)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.sessionStorage) return;
+    try {
+      const saved = window.sessionStorage.getItem('peed_tab') as ShellTab | null;
+      const valid: ShellTab[] = ['home', 'burning', 'peed', 'my', 'settings', 'dm', 'game'];
+      if (saved && valid.includes(saved)) setTabState(saved);
+    } catch {
+      // ignore
+    }
+  }, []);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.sessionStorage) return;
+    try {
+      window.sessionStorage.setItem('peed_tab', tab);
+    } catch {
+      // ignore
+    }
+  }, [tab]);
 
   const setAuthed = useCallback((v: boolean) => {
     setAuthedState(v);
@@ -160,13 +183,21 @@ export function ShellProvider({ children }: { children: React.ReactNode }) {
     dropOverlay(closeStoreDetailFn);
   }, [dropOverlay, closeStoreDetailFn]);
 
-  const closeBiteComposerFn = useCallback(() => setBiteComposer(false), []);
-  const openBiteComposer = useCallback(() => {
-    setBiteComposer(true);
-    openOverlay(closeBiteComposerFn);
-  }, [openOverlay, closeBiteComposerFn]);
+  const closeBiteComposerFn = useCallback(() => {
+    setBiteComposer(false);
+    setBiteEditId(null);
+  }, []);
+  const openBiteComposer = useCallback(
+    (biteId?: string) => {
+      setBiteEditId(biteId ?? null);
+      setBiteComposer(true);
+      openOverlay(closeBiteComposerFn);
+    },
+    [openOverlay, closeBiteComposerFn]
+  );
   const closeBiteComposer = useCallback(() => {
     setBiteComposer(false);
+    setBiteEditId(null);
     dropOverlay(closeBiteComposerFn);
   }, [dropOverlay, closeBiteComposerFn]);
 
@@ -273,6 +304,7 @@ export function ShellProvider({ children }: { children: React.ReactNode }) {
       openStoreDetail,
       closeStoreDetail,
       biteComposer,
+      biteEditId,
       openBiteComposer,
       closeBiteComposer,
       biteViewerId,
@@ -310,6 +342,7 @@ export function ShellProvider({ children }: { children: React.ReactNode }) {
       openStoreDetail,
       closeStoreDetail,
       biteComposer,
+      biteEditId,
       openBiteComposer,
       closeBiteComposer,
       biteViewerId,

@@ -15,12 +15,23 @@ export type ConvRow = {
   created_at: string;
 };
 export type MemberRow = { conversation_id: string; user_id: string; last_read_at: string };
+// 스토리(바이트) 답장에 딸려오는 원본 조각. 참조(id)가 아니라 그때의 모습을
+// 통째로 베껴 둔다 — 스토리는 24시간 뒤 사라지는데, 참조로 두면 그 뒤에 대화를
+// 열었을 때 무엇에 답한 건지 알 수 없는 빈 말풍선만 남는다.
+export type MessageBiteRef = {
+  id: string;
+  image: string; // 없으면 '' (글만 있는 스토리)
+  caption: string;
+  authorName: string;
+};
+
 export type MessageRow = {
   id: string;
   conversation_id: string;
   from_user: string;
   body: string;
   image: string | null;
+  bite?: MessageBiteRef; // 스토리에 답장한 메시지에만 붙는다
   created_at: string;
 };
 
@@ -65,7 +76,8 @@ export async function insertMessage(
   convId: string,
   from: string,
   body: string,
-  image?: string
+  image?: string,
+  bite?: MessageBiteRef
 ): Promise<MessageRow | null> {
   if (!convId || !from) return null;
   return locked(async () => {
@@ -76,6 +88,7 @@ export async function insertMessage(
       from_user: from,
       body: body || '',
       image: image || null,
+      ...(bite ? { bite } : null),
       created_at: new Date().toISOString(),
     };
     messages.push(row);

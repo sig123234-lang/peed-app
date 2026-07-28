@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import React, { useEffect, useState } from 'react';
-import { Linking, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Linking, Modal, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BurningMap } from '@/components/burning/BurningMap';
@@ -38,12 +38,36 @@ function KakaoActions({ store }: { store: ReservableStore }) {
     Linking.openURL(`https://map.kakao.com/link/map/${name},${store.lat},${store.lng}`);
   const openRoute = () =>
     Linking.openURL(`https://map.kakao.com/link/to/${name},${store.lat},${store.lng}`);
+  // 카카오 T(택시) 앱 열기. (kakaot.com 은 카카오 T 가 아니라 엉뚱한 사이트라 절대 쓰지 않는다.)
+  // 앱이 있으면 실행, 없으면 각 스토어로 보낸다.
   const openTaxi = () => {
-    if (Platform.OS === 'web') {
-      Linking.openURL('https://kakaot.com');
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+    const isiOS = /iPad|iPhone|iPod/i.test(ua);
+    const appStore = 'https://apps.apple.com/kr/app/id981110422'; // 카카오 T
+    const playStore = 'https://play.google.com/store/apps/details?id=com.kakao.taxi';
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (isiOS) {
+        // 앱 실행 시도 → 안 열리면(포그라운드 유지) 앱스토어.
+        let switched = false;
+        const onHide = () => {
+          switched = true;
+        };
+        document.addEventListener('visibilitychange', onHide, { once: true });
+        window.location.href = 'kakaot://launch';
+        setTimeout(() => {
+          document.removeEventListener('visibilitychange', onHide);
+          if (!switched && !document.hidden) window.location.href = appStore;
+        }, 1500);
+      } else {
+        // 안드로이드: 앱 있으면 실행, 없으면 Play스토어(intent 폴백 내장).
+        window.location.href =
+          'intent://launch#Intent;scheme=kakaot;package=com.kakao.taxi;S.browser_fallback_url=' +
+          encodeURIComponent(playStore) +
+          ';end';
+      }
       return;
     }
-    Linking.openURL('kakaot://launch').catch(() => Linking.openURL('https://kakaot.com'));
+    Linking.openURL('kakaot://launch').catch(() => Linking.openURL(isiOS ? appStore : playStore));
   };
 
   const btns: { icon: any; label: string; onPress: () => void }[] = [
@@ -84,6 +108,21 @@ export function StoreDetailScreen({
   // 메뉴가 수십 개인 매장이면 화면이 메뉴로만 채워져 아래 예약·리뷰까지
   // 내려가기 힘들다. 대표 5개만 펼쳐두고 나머지는 접는다.
   const [menusOpen, setMenusOpen] = useState(false);
+  // 사진 크게 보기(라이트박스) — 탭한 사진 URI.
+  const [lightbox, setLightbox] = useState<string | null>(null);
+
+  // 예약은 아직 준비 중 — 버튼을 누르면 안내만.
+  const showReserveSoon = () => {
+    if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+      window.alert('예약 기능은 준비 중입니다 🙏');
+    }
+  };
+
+  // 대표 이미지(hero) URI 추출 — 라이트박스에서 크게 보기용.
+  const heroUri =
+    typeof store.image === 'string'
+      ? store.image
+      : (store.image && (store.image as any).uri) || (store.photos && store.photos[0]) || '';
   // 이 매장의 전체 리뷰를 서버에서 조회(현재 피드 샘플이 아니라 매장별 전량).
   const [serverReviews, setServerReviews] = useState<any[]>([]);
   useEffect(() => {
@@ -129,13 +168,17 @@ export function StoreDetailScreen({
         contentContainerStyle={styles.scrollContent}
       >
         <View style={styles.centerWrap}>
-          {/* hero */}
-          <View style={styles.hero}>
+          {/* hero (탭하면 크게 보기) */}
+          <TouchableOpacity
+            style={styles.hero}
+            activeOpacity={0.9}
+            onPress={() => heroUri && setLightbox(heroUri)}
+          >
             <Image source={store.image} style={styles.heroImg} contentFit="cover" />
             <View style={styles.burnBadge}>
               <Text style={styles.burnBadgeText}>🔥 버닝 · +{store.reward} PB</Text>
             </View>
-          </View>
+          </TouchableOpacity>
 
           {/* title */}
           <Text style={styles.name}>{store.name}</Text>
@@ -145,16 +188,14 @@ export function StoreDetailScreen({
               {store.rating} · {store.category}
             </Text>
           </View>
-          <Text style={styles.sub}>
-            📍 {store.location} · {store.priceRange}
-          </Text>
+          <Text style={styles.sub}>📍 {store.location}</Text>
 
           {/* actions */}
           <View style={styles.actions}>
             <AppButton
               label="예약하기"
               variant="coral"
-              onPress={onReserve}
+              onPress={showReserveSoon}
               style={{ flex: 1.4 }}
             />
             <AppButton
@@ -175,7 +216,9 @@ export function StoreDetailScreen({
                 contentContainerStyle={{ gap: spacing.sm }}
               >
                 {store.photos.map((ph, i) => (
-                  <Image key={i} source={{ uri: ph }} style={styles.galleryImg} contentFit="cover" />
+                  <TouchableOpacity key={i} activeOpacity={0.9} onPress={() => setLightbox(ph)}>
+                    <Image source={{ uri: ph }} style={styles.galleryImg} contentFit="cover" />
+                  </TouchableOpacity>
                 ))}
               </ScrollView>
             </>
@@ -183,8 +226,7 @@ export function StoreDetailScreen({
 
           {/* info */}
           <View style={styles.card}>
-            <InfoRow icon="time-outline" label="영업시간" value="매일 11:00 – 23:00" />
-            <InfoRow icon="cash-outline" label="가격대" value={store.priceRange} />
+            <InfoRow icon="time-outline" label="영업시간" value={store.hours || '문의'} />
             {store.phone ? <InfoRow icon="call-outline" label="전화" value={store.phone} /> : null}
             <InfoRow icon="location-outline" label="위치" value={store.location} last />
           </View>
@@ -236,15 +278,6 @@ export function StoreDetailScreen({
               })()
             : null}
 
-          <Text style={styles.sectionTitle}>예약 가능 시간</Text>
-          <View style={styles.timeWrap}>
-            {store.times.map((t) => (
-              <View key={t} style={styles.timeChip}>
-                <Text style={styles.timeText}>{t}</Text>
-              </View>
-            ))}
-          </View>
-
           <Text style={styles.sectionTitle}>위치</Text>
           <BurningMap
             markers={[
@@ -283,6 +316,22 @@ export function StoreDetailScreen({
           <View style={{ height: 40 }} />
         </View>
       </ScrollView>
+
+      {/* 사진 크게 보기 */}
+      <Modal visible={!!lightbox} transparent animationType="fade" onRequestClose={() => setLightbox(null)}>
+        <TouchableOpacity
+          style={styles.lightboxBackdrop}
+          activeOpacity={1}
+          onPress={() => setLightbox(null)}
+        >
+          {lightbox ? (
+            <Image source={{ uri: lightbox }} style={styles.lightboxImg} contentFit="contain" />
+          ) : null}
+          <View style={styles.lightboxClose}>
+            <Ionicons name="close" size={26} color="#fff" />
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -472,6 +521,25 @@ const styles = StyleSheet.create({
     ...shadow.soft,
   },
   timeText: { fontSize: 14, fontWeight: '800', color: colors.primary },
+
+  lightboxBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lightboxImg: { width: '100%', height: '80%' },
+  lightboxClose: {
+    position: 'absolute',
+    top: 44,
+    right: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   empty: {
     backgroundColor: colors.card,

@@ -3,19 +3,26 @@ import { LinearGradient } from 'expo-linear-gradient';
 import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { useBiteStories } from '@/components/feed/useBiteStories';
+import { useBiteStoryGroups } from '@/components/feed/useBiteStories';
 import { useFeed } from '@/context/feed';
 import { useShell } from '@/context/shell';
 import { colors, gradients, radius, spacing } from '@/theme';
 
 // Bites — a bite-size peek at where people just went. Reels-style tall-tile
-// tray that bleeds to the screen edges. First tile is "My Bite" (＋ → upload a
-// photo story); the rest are live stories (my bites, then friends' latest) —
-// tap any to play them fullscreen in the viewer.
+// tray that bleeds to the screen edges.
+//
+// 칸은 사람당 하나다. 맨 앞은 항상 내 칸 — 올린 게 없으면 프로필 사진에 ＋만
+// 크게 얹은 업로드 버튼이고, 올린 게 있으면 그 칸이 곧 내 스토리가 된다(누르면
+// 재생, 우하단 작은 ＋ 로 새로 올리기). 그래서 '내 스토리' 칸이 따로 생기지
+// 않는다. 나머지는 사람별로 한 칸씩, 최근에 올린 사람부터.
 export function BitesTray() {
   const { me, profileAvatar } = useFeed();
   const { openBiteComposer, openBiteViewer } = useShell();
-  const stories = useBiteStories();
+  const groups = useBiteStoryGroups();
+
+  const mine = groups.find((g) => g.isMine);
+  const others = groups.filter((g) => !g.isMine);
+  const myAvatar = profileAvatar ? { uri: profileAvatar } : me.avatar;
 
   return (
     <View style={styles.wrap}>
@@ -29,14 +36,14 @@ export function BitesTray() {
         style={styles.tray}
         contentContainerStyle={styles.trayContent}
       >
-        {/* my bite → open the story composer */}
+        {/* 내 칸 — 올린 게 있으면 스토리 재생, 없으면 바로 컴포저 */}
         <TouchableOpacity
           style={styles.tile}
           activeOpacity={0.85}
-          onPress={openBiteComposer}
+          onPress={() => (mine ? openBiteViewer(mine.userId) : openBiteComposer())}
         >
           <Image
-            source={profileAvatar ? { uri: profileAvatar } : me.avatar}
+            source={mine?.cover ?? myAvatar}
             style={styles.cover}
             contentFit="cover"
           />
@@ -44,45 +51,97 @@ export function BitesTray() {
             colors={['transparent', 'rgba(0,0,0,0.7)']}
             style={styles.scrim}
           />
-          <View style={styles.plusWrap}>
-            <View style={styles.plusCircle}>
-              <Text style={styles.plus}>＋</Text>
+
+          {mine ? (
+            <>
+              {/* 올린 게 있으면 다른 칸과 같은 링 + 개수, 추가는 작은 ＋ 로 */}
+              <LinearGradient
+                colors={gradients.lime}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.ring}
+              >
+                <View style={styles.ringInner}>
+                  <Image source={myAvatar} style={styles.avatar} contentFit="cover" />
+                </View>
+              </LinearGradient>
+              {mine.items.length > 1 && (
+                <View style={styles.countPill}>
+                  <Text style={styles.countText}>{mine.items.length}</Text>
+                </View>
+              )}
+              <TouchableOpacity
+                style={styles.addBtn}
+                activeOpacity={0.85}
+                onPress={() => openBiteComposer()}
+                hitSlop={8}
+              >
+                <Text style={styles.addPlus}>＋</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <View style={styles.plusWrap}>
+              <View style={styles.plusCircle}>
+                <Text style={styles.plus}>＋</Text>
+              </View>
             </View>
-          </View>
-          <View style={styles.tileBottom}>
-            <Text style={styles.name}>My Bite</Text>
+          )}
+
+          {/* ＋ 버튼이 있는 동안은 이름표가 그 밑으로 파고들지 않게 좁힌다 */}
+          <View style={[styles.tileBottom, mine && styles.tileBottomWithAdd]}>
+            <Text style={styles.name} numberOfLines={1}>
+              My Bite
+            </Text>
           </View>
         </TouchableOpacity>
 
-        {stories.map((story) => (
+        {others.map((group) => (
           <TouchableOpacity
-            key={story.id}
+            key={group.userId}
             style={styles.tile}
             activeOpacity={0.9}
-            onPress={() => openBiteViewer(story.id)}
+            onPress={() => openBiteViewer(group.userId)}
           >
-            <Image source={story.image} style={styles.cover} contentFit="cover" />
+            {group.cover ? (
+              <Image source={group.cover} style={styles.cover} contentFit="cover" />
+            ) : (
+              <LinearGradient
+                colors={
+                  (group.coverBg && group.coverBg.length >= 2
+                    ? group.coverBg
+                    : ['#6C5CE7', '#4F6BFF']) as [string, string]
+                }
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.cover}
+              />
+            )}
             <LinearGradient
               colors={['transparent', 'rgba(0,0,0,0.7)']}
               style={styles.scrim}
             />
             <LinearGradient
-              colors={story.isMine ? gradients.lime : gradients.brandDiagonal}
+              colors={gradients.brandDiagonal}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.ring}
             >
               <View style={styles.ringInner}>
                 <Image
-                  source={story.avatar}
+                  source={group.avatar}
                   style={styles.avatar}
                   contentFit="cover"
                 />
               </View>
             </LinearGradient>
+            {group.items.length > 1 && (
+              <View style={styles.countPill}>
+                <Text style={styles.countText}>{group.items.length}</Text>
+              </View>
+            )}
             <View style={styles.tileBottom}>
               <Text style={styles.name} numberOfLines={1}>
-                {story.isMine ? '내 스토리' : story.name}
+                {group.name}
               </Text>
             </View>
           </TouchableOpacity>
@@ -161,6 +220,47 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceAlt,
   },
 
+  // 묶음 개수 — 링 반대편 위쪽에 앉혀 아바타와 겹치지 않게.
+  countPill: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.white,
+  },
+
+  // 내 칸에 스토리가 이미 있을 때의 '새로 올리기' — 이름표를 가리지 않게
+  // 우하단 모서리에 작게.
+  addBtn: {
+    position: 'absolute',
+    right: 8,
+    bottom: 8,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.coral,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.white,
+  },
+  addPlus: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.white,
+    marginTop: -2,
+  },
+
   plusWrap: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
@@ -189,6 +289,9 @@ const styles = StyleSheet.create({
     left: 10,
     right: 10,
     bottom: 10,
+  },
+  tileBottomWithAdd: {
+    right: 40,
   },
   name: {
     fontSize: 14,

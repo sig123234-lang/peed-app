@@ -113,3 +113,38 @@ export async function addComment(id: string, comment: ServerComment): Promise<Se
   await savePosts(list);
   return list[idx];
 }
+
+/** 댓글 수정 — 작성자 본인만. */
+export async function editComment(
+  postId: string,
+  commentId: string,
+  userId: string,
+  text: string
+): Promise<{ post: ServerPost; comment: ServerComment } | null> {
+  const list = await allPosts();
+  const idx = list.findIndex((p) => p.id === postId);
+  if (idx < 0) return null;
+  const c = (list[idx].comments || []).find((x) => x.id === commentId);
+  if (!c || c.userId !== userId) return null;
+  c.text = String(text || '').slice(0, 500);
+  await savePosts(list);
+  return { post: list[idx], comment: c };
+}
+
+/** 댓글 삭제 — 작성자 본인 또는 게시물 주인. */
+export async function removeComment(
+  postId: string,
+  commentId: string,
+  userId: string
+): Promise<ServerPost | null> {
+  const list = await allPosts();
+  const idx = list.findIndex((p) => p.id === postId);
+  if (idx < 0) return null;
+  const post = list[idx];
+  const c = (post.comments || []).find((x) => x.id === commentId);
+  if (!c) return null;
+  if (c.userId !== userId && post.authorId !== userId) return null;
+  post.comments = (post.comments || []).filter((x) => x.id !== commentId);
+  await savePosts(list);
+  return post;
+}

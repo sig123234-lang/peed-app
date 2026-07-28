@@ -153,6 +153,20 @@ export default function PeedScreen({ embedded = false }: { embedded?: boolean })
     }
 
     const prize = selectedPrize;
+
+    // 응모 확정 전 확인 — 응모는 취소 불가라 명확히 고지하고 예/아니오를 받는다.
+    const msg = `${prize.name}에 ${applyCount}회 응모합니다. (${prize.pbCost * applyCount}PB 사용)\n\n응모 후 취소는 불가능합니다. 응모하시겠습니까?`;
+    const proceed =
+      typeof window !== 'undefined' && typeof window.confirm === 'function'
+        ? window.confirm(msg)
+        : await new Promise<boolean>((resolve) =>
+            Alert.alert('응모 확인', msg, [
+              { text: '아니오', style: 'cancel', onPress: () => resolve(false) },
+              { text: '예', onPress: () => resolve(true) },
+            ])
+          );
+    if (!proceed) return;
+
     setApplyModalVisible(false);
 
     // 서버에서 실제 PB 차감 + 응모 기록(진짜 응모). 응모는 확정되면 취소 불가.

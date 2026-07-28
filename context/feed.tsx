@@ -35,8 +35,12 @@ export type FeedUser = {
 
 export type FeedComment = {
   id: string;
+  userId?: string; // 작성자 프로필로 이동 + 멘션 탭용
   userName: string;
   text: string;
+  ts?: number; // 상대시간 표시용
+  avatar?: any; // 작성자 프로필 사진(URL 문자열 또는 이미지 소스)
+  handle?: string;
 };
 
 export type Post = {
@@ -76,6 +80,19 @@ export type BiteOverlay = {
   highlight?: boolean; // colored background behind text (IG-style)
 };
 
+// 컴포저에서 사진을 배치한 결과 — 확대/축소, 이동, 회전.
+//
+// 사진은 프레임에 갇힌 배경이 아니라 배경 위에 얹힌 '물체'다. 원본 비율 그대로
+// (contain) 깔린 상태를 scale 1 로 보고, 줄이면 뒤 배경이 드러나고 키우면
+// 프레임 밖으로 넘친다. x·y 는 캔버스 크기로 나눈 비율이라 뷰어 크기가 달라도
+// 같은 구도로 재현된다(픽셀로 저장하면 화면마다 어긋난다). rotate 는 도(0~360).
+export type BiteImageFit = {
+  scale: number;
+  x: number;
+  y: number;
+  rotate?: number;
+};
+
 export type Bite = {
   id: string;
   author: FeedUser;
@@ -84,29 +101,42 @@ export type Bite = {
   overlays?: BiteOverlay[];
   filter?: string; // filter preset key (see biteStyles)
   bg?: string[]; // gradient stops for a photo-less story
+  fit?: BiteImageFit; // 사진 구도(확대/이동) — 없으면 원본을 꽉 채움
   audience?: 'all' | 'close'; // 전체 공개 / 친한 친구
   createdAt: number; // ms epoch — used for the 24h expiry
+  likeCount?: number; // 좋아요 수
+  liked?: boolean; // 내가 좋아요 눌렀는지
 };
 
 /** Won formatter without relying on Intl (Hermes-safe). */
 export const won = (n: number) =>
   `${n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')}원`;
 
-// 도장깨기 board — shared so the review flow and the passport agree.
-export const STAMP_DISTRICT = '마포구';
-export const STAMP_BOARD = [
-  '홍대',
-  '연남',
-  '상수',
-  '합정',
-  '망원',
-  '성산',
-  '서교',
-];
+// 도장 패스포트 — 고른 지역의 서로 다른 매장에 리뷰를 남길 때마다 도장이
+// 하나씩 찍힌다. 목표 개수를 채우면 보너스 PB 를 받고 지역을 다시 고른다.
+// 실제 계산은 서버(api/_passport.ts)가 하고, 여기서는 그 상태를 받아 둔다.
+export type Passport = {
+  region: string; // 진행 중인 지역 키(예: "경기 고양시 덕양구"). 비면 미선택.
+  stores: string[]; // 이번 지역에서 도장 찍은 매장명
+  completed: number; // 완주 횟수
+  history: string[]; // 완주한 지역들
+};
 
-/** Find a stamp-board neighborhood mentioned in free text (store/caption). */
-export const detectNeighborhood = (text: string) =>
-  STAMP_BOARD.find((n) => text.includes(n)) ?? '';
+export const EMPTY_PASSPORT: Passport = {
+  region: '',
+  stores: [],
+  completed: 0,
+  history: [],
+};
+
+export function normalizePassport(p: any): Passport {
+  return {
+    region: String(p?.region || ''),
+    stores: Array.isArray(p?.stores) ? p.stores.map(String) : [],
+    completed: Number(p?.completed) || 0,
+    history: Array.isArray(p?.history) ? p.history.map(String) : [],
+  };
+}
 
 // 기본 아바타 = 이름 이니셜을 브랜드색 원 안에 그린 SVG(스톡 사진 X). 아바타가
 // 없으면 어디서든 이 값을 쓴다.
@@ -146,7 +176,9 @@ function mapServerPost(sp: any, meId: string): Post {
     store: sp.store || '',
     category: sp.category || '',
     location: sp.location || '',
-    image: sp.image ? { uri: sp.image } : initialAvatar(sp.store),
+    // 이용 사진이 없으면 비워 둔다. 예전엔 이니셜 아바타를 대신 넣었는데,
+    // 원형 아바타가 카드 폭으로 늘어나 보기 흉했다. 화면 쪽에서 글자 카드로 그린다.
+    image: sp.image ? { uri: sp.image } : null,
     rating: Number(sp.rating) || 0,
     caption: sp.caption || '',
     tags: Array.isArray(sp.tags) ? sp.tags : [],
@@ -155,7 +187,15 @@ function mapServerPost(sp: any, meId: string): Post {
     saved: false,
     saveCount: Number(sp.saveCount) || 0,
     comments: Array.isArray(sp.comments)
-      ? sp.comments.map((c: any) => ({ id: c.id, userName: c.userName, text: c.text }))
+      ? sp.comments.map((c: any) => ({
+          id: c.id,
+          userId: c.userId,
+          userName: c.userName,
+          text: c.text,
+          ts: c.ts,
+          avatar: c.avatar || '',
+          handle: c.handle || '',
+        }))
       : [],
     timeLabel: sp.timeLabel || '방금',
     isBurning: !!sp.isBurning,
@@ -180,8 +220,18 @@ function mapServerBite(sb: any): Bite {
     overlays: Array.isArray(sb.overlays) ? sb.overlays : [],
     filter: sb.filter,
     bg: sb.bg,
+    fit: sb.fit
+      ? {
+          scale: Number(sb.fit.scale) || 1,
+          x: Number(sb.fit.x) || 0,
+          y: Number(sb.fit.y) || 0,
+          rotate: Number(sb.fit.rotate) || 0,
+        }
+      : undefined,
     audience: sb.audience === 'close' ? 'close' : 'all',
     createdAt: Number(sb.createdAt) || Date.now(),
+    likeCount: Number(sb.likeCount) || 0,
+    liked: !!sb.liked,
   };
 }
 
@@ -200,13 +250,35 @@ type FeedContextValue = {
     overlays?: BiteOverlay[];
     filter?: string;
     bg?: string[];
+    fit?: BiteImageFit;
     audience?: 'all' | 'close';
   }) => void;
-  stamps: string[];
-  collectStamp: (neighborhood: string) => void;
+  // 내 스토리 수정/삭제. 수정은 보낸 항목만 반영되고, fit 에 null 을 주면
+  // 사진 구도를 기본으로 되돌린다.
+  editBite: (
+    biteId: string,
+    patch: {
+      image?: any;
+      caption?: string;
+      overlays?: BiteOverlay[];
+      filter?: string;
+      bg?: string[];
+      fit?: BiteImageFit | null;
+      audience?: 'all' | 'close';
+    }
+  ) => void;
+  deleteBite: (biteId: string) => void;
+  toggleBiteLike: (biteId: string) => void;
+  passport: Passport;
+  passportGoal: number;
+  passportReward: number;
+  pickRegion: (regionKey: string) => Promise<void>;
+  refreshPassport: () => Promise<void>;
   toggleSave: (postId: string) => void;
   toggleFollow: (userId: string) => void;
   addComment: (postId: string, text: string) => void;
+  editComment: (postId: string, commentId: string, text: string) => void;
+  deleteComment: (postId: string, commentId: string) => void;
   editPost: (postId: string, patch: { caption?: string; isPrivate?: boolean }) => void;
   deletePost: (postId: string) => void;
   profileAvatar: string | null;
@@ -216,7 +288,8 @@ type FeedContextValue = {
     kind?: FeedKind;
     category?: string;
     location?: string;
-    image: any;
+    // 이용 사진은 선택이다. 없으면 홈 피드에는 안 뜨고 프로필에서만 보인다.
+    image?: any;
     rating: number;
     caption: string;
     tags?: string[];
@@ -233,15 +306,14 @@ const FeedContext = createContext<FeedContextValue | undefined>(undefined);
 let biteSeq = 0;
 let commentSeq = 0;
 
-// 웹: 사진 uri(blob:/http/data) → 다운스케일 JPEG data URL(업로드용). 네이티브/실패 시 ''.
-export async function imageUriToDataUrl(uri: string, max = 1280): Promise<string> {
-  if (!uri) return '';
-  if (uri.startsWith('data:')) return uri;
-  if (Platform.OS !== 'web' || typeof document === 'undefined') return '';
+// 캔버스로 줄여 담기 — 실패하면 ''(호출부가 원본 그대로 올리는 길로 넘어간다).
+function downscaleToDataUrl(uri: string, max: number): Promise<string> {
   return new Promise((resolve) => {
     try {
       const img = new (window as any).Image();
-      img.crossOrigin = 'anonymous';
+      // crossOrigin 은 원격 이미지에만 필요하다. blob:/같은 출처에까지 붙이면
+      // 브라우저에 따라 로드 자체가 막혀 사진이 통째로 사라진다.
+      if (/^https?:/i.test(uri)) img.crossOrigin = 'anonymous';
       img.onload = () => {
         try {
           let w = img.naturalWidth || img.width;
@@ -268,6 +340,39 @@ export async function imageUriToDataUrl(uri: string, max = 1280): Promise<string
   });
 }
 
+// 원본 바이트를 그대로 data URL 로 — 브라우저가 그림을 못 그려도(디코딩 실패
+// 등) 파일 자체는 읽을 수 있다. 프로필 사진이 쓰던 방식과 같다.
+function rawToDataUrl(uri: string): Promise<string> {
+  return fetch(uri)
+    .then((r) => r.blob())
+    .then(
+      (blob) =>
+        new Promise<string>((resolve) => {
+          const fr = new FileReader();
+          fr.onload = () => resolve(String(fr.result || ''));
+          fr.onerror = () => resolve('');
+          fr.readAsDataURL(blob);
+        })
+    )
+    .catch(() => '');
+}
+
+// 웹: 사진 uri(blob:/http/data) → 업로드용 data URL. 네이티브/실패 시 ''.
+//
+// 웹 파일선택기는 data: 가 아니라 blob: URL 을 준다. 예전에는 캔버스로 줄이는
+// 길 하나뿐이라 그게 실패하면 그대로 '' 이 되고, 호출부는 사진 없는 글/스토리를
+// 서버에 만들어버렸다(올린 사진이 조용히 사라짐). 이제 캔버스가 실패하면 원본을
+// 그대로 올리는 길로 물러선다 — 용량은 커져도 사진을 잃지는 않는다.
+export async function imageUriToDataUrl(uri: string, max = 1280): Promise<string> {
+  if (!uri) return '';
+  if (uri.startsWith('data:')) return uri;
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return '';
+  const small = await downscaleToDataUrl(uri, max);
+  if (small) return small;
+  const raw = await rawToDataUrl(uri);
+  return raw.startsWith('data:image/') ? raw : '';
+}
+
 export function FeedProvider({ children }: { children: React.ReactNode }) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [myPosts, setMyPosts] = useState<Post[]>([]);
@@ -281,7 +386,9 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     followingRef.current = followingIds;
   }, [followingIds]);
   const [bites, setBites] = useState<Bite[]>([]);
-  const [stamps, setStamps] = useState<string[]>([]);
+  const [passport, setPassport] = useState<Passport>(EMPTY_PASSPORT);
+  const [passportGoal, setPassportGoal] = useState(5);
+  const [passportReward, setPassportReward] = useState(2);
   // 내 프로필 사진 — 마이 편집 + 홈 바이트 카드 등 앱 전체가 같은 값을 공유.
   const [profileAvatar, setProfileAvatarState] = useState<string | null>(null);
   // 로그인한 실제 사용자 — 로컬에 브릿지된 프로필(SessionSync)에서 하이드레이트.
@@ -372,13 +479,32 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // 서버에서 도장(패스포트) 로드.
-  const refreshStamps = useCallback(async () => {
+  // 서버에서 도장 패스포트 로드.
+  const refreshPassport = useCallback(async () => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     try {
-      const r = await fetch('/api/public?action=stamps', { credentials: 'include' });
+      const r = await fetch('/api/public?action=passport', { credentials: 'include' });
       const d = await r.json();
-      if (Array.isArray(d?.stamps)) setStamps(d.stamps);
+      if (d?.passport) setPassport(normalizePassport(d.passport));
+      if (Number(d?.goal)) setPassportGoal(Number(d.goal));
+      if (Number(d?.reward)) setPassportReward(Number(d.reward));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // 지역 선택. 진행 중이던 지역과 다르면 서버가 도장을 비운다.
+  const pickRegion = useCallback(async (key: string) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    try {
+      const r = await fetch('/api/public?action=pickRegion', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ region: key }),
+      });
+      const d = await r.json();
+      if (d?.passport) setPassport(normalizePassport(d.passport));
     } catch {
       // ignore
     }
@@ -411,9 +537,9 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
       await refreshMyPosts(uid);
       await refreshFollow(uid);
       await refreshBites();
-      await refreshStamps();
+      await refreshPassport();
     })();
-  }, [refreshFeed, refreshMyPosts, refreshFollow, refreshBites, refreshStamps]);
+  }, [refreshFeed, refreshMyPosts, refreshFollow, refreshBites, refreshPassport]);
 
   const setProfileAvatar = useCallback((uri: string | null) => {
     setProfileAvatarState(uri);
@@ -431,20 +557,6 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // 도장 수집 — 낙관적 반영 + 서버 저장(계정 귀속).
-  const collectStamp = useCallback((neighborhood: string) => {
-    const name = neighborhood.trim();
-    if (!name) return;
-    setStamps((prev) => (prev.includes(name) ? prev : [...prev, name]));
-    if (Platform.OS === 'web') {
-      fetch('/api/public?action=collectStamp', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-      }).catch(() => {});
-    }
-  }, []);
-
   const toggleSave = useCallback(
     (postId: string) => {
       const cur = posts.find((p) => p.id === postId);
@@ -519,7 +631,16 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     const t = text.trim();
     if (!t) return;
     commentSeq += 1;
-    const c = { id: `uc${commentSeq}`, userName: meRef.current.name, text: t };
+    const meAv = meRef.current.avatar;
+    const c = {
+      id: `uc${commentSeq}`,
+      userId: meRef.current.id,
+      userName: meRef.current.name,
+      text: t,
+      ts: Date.now(),
+      avatar: typeof meAv === 'string' ? meAv : meAv?.uri || '',
+      handle: meRef.current.handle,
+    };
     const apply = (p: Post) =>
       p.id === postId ? { ...p, comments: [...p.comments, c] } : p;
     setPosts((prev) => prev.map(apply));
@@ -529,6 +650,36 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: postId, text: t }),
+    }).catch(() => {});
+  }, []);
+
+  const editComment = useCallback((postId: string, commentId: string, text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    const apply = (p: Post) =>
+      p.id === postId
+        ? { ...p, comments: p.comments.map((c) => (c.id === commentId ? { ...c, text: t } : c)) }
+        : p;
+    setPosts((prev) => prev.map(apply));
+    setMyPosts((prev) => prev.map(apply));
+    fetch('/api/public?action=editComment', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postId, commentId, text: t }),
+    }).catch(() => {});
+  }, []);
+
+  const deleteComment = useCallback((postId: string, commentId: string) => {
+    const apply = (p: Post) =>
+      p.id === postId ? { ...p, comments: p.comments.filter((c) => c.id !== commentId) } : p;
+    setPosts((prev) => prev.map(apply));
+    setMyPosts((prev) => prev.map(apply));
+    fetch('/api/public?action=deleteComment', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postId, commentId }),
     }).catch(() => {});
   }, []);
 
@@ -567,6 +718,11 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
       (async () => {
         try {
           const dataUrl = await imageUriToDataUrl(localUri);
+          // 리뷰는 사진을 못 읽어도 본문·적립까지 날리진 않는다. 다만 사진이
+          // 조용히 빠지면 모르니 알려는 준다.
+          if (localUri && !dataUrl && typeof window !== 'undefined') {
+            window.alert('사진을 불러오지 못해 사진 없이 올라갑니다.');
+          }
           const r = await fetch('/api/public?action=createPost', {
             method: 'POST',
             credentials: 'include',
@@ -611,6 +767,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
         overlays: input.overlays ?? [],
         filter: input.filter,
         bg: input.bg,
+        fit: input.fit,
         audience: input.audience ?? 'all',
         createdAt: Date.now(),
       };
@@ -620,6 +777,15 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
         try {
           const localUri: string = input.image?.uri || '';
           const dataUrl = localUri ? await imageUriToDataUrl(localUri) : '';
+          // 사진을 골랐는데 못 읽었으면 사진 없는 빈 스토리가 서버에 남는다.
+          // 만들지 말고 되돌린 뒤 알린다 — 조용히 사라지는 게 제일 나쁘다.
+          if (localUri && !dataUrl) {
+            setBites((prev) => prev.filter((b) => b.id !== optimistic.id));
+            if (typeof window !== 'undefined') {
+              window.alert('사진을 불러오지 못했어요. 다시 시도해주세요.');
+            }
+            return;
+          }
           await fetch('/api/public?action=createBite', {
             method: 'POST',
             credentials: 'include',
@@ -630,6 +796,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
               overlays: input.overlays ?? [],
               filter: input.filter,
               bg: input.bg,
+              fit: input.fit,
               audience: input.audience ?? 'all',
             }),
           });
@@ -641,6 +808,99 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     },
     [refreshBites]
   );
+
+  // 내 스토리 고치기. 보낸 항목만 바뀐다 — 사진을 안 건드렸으면 image 키를
+  // 아예 빼서 서버의 기존 사진이 남게 한다.
+  const editBite = useCallback<FeedContextValue['editBite']>(
+    (biteId, patch) => {
+      // 낙관적 반영(사진은 로컬 uri 로 바로 보여준다).
+      setBites((prev) =>
+        prev.map((b) =>
+          b.id !== biteId
+            ? b
+            : {
+                ...b,
+                ...(patch.image !== undefined ? { image: patch.image } : null),
+                ...(patch.caption !== undefined ? { caption: patch.caption } : null),
+                ...(patch.overlays !== undefined ? { overlays: patch.overlays } : null),
+                ...(patch.filter !== undefined ? { filter: patch.filter } : null),
+                ...(patch.bg !== undefined ? { bg: patch.bg } : null),
+                ...(patch.fit !== undefined ? { fit: patch.fit ?? undefined } : null),
+                ...(patch.audience !== undefined ? { audience: patch.audience } : null),
+              }
+        )
+      );
+      if (Platform.OS !== 'web') return;
+      (async () => {
+        try {
+          const body: Record<string, any> = { id: biteId };
+          if (patch.caption !== undefined) body.caption = patch.caption;
+          if (patch.overlays !== undefined) body.overlays = patch.overlays;
+          if (patch.filter !== undefined) body.filter = patch.filter;
+          if (patch.bg !== undefined) body.bg = patch.bg;
+          if (patch.fit !== undefined) body.fit = patch.fit; // null 이면 구도 초기화
+          if (patch.audience !== undefined) body.audience = patch.audience;
+
+          if (patch.image !== undefined) {
+            const uri: string = patch.image?.uri || '';
+            if (!uri) body.image = '';
+            else if (uri.startsWith('/api/') || uri.startsWith('http')) {
+              // 이미 서버에 있는 사진 — 그대로 두면 되니 보내지 않는다.
+            } else {
+              const dataUrl = await imageUriToDataUrl(uri);
+              if (!dataUrl) {
+                if (typeof window !== 'undefined') {
+                  window.alert('사진을 불러오지 못했어요. 다시 시도해주세요.');
+                }
+                await refreshBites(); // 낙관적 반영을 서버 값으로 되돌린다
+                return;
+              }
+              body.image = dataUrl;
+            }
+          }
+
+          await fetch('/api/public?action=editBite', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          await refreshBites();
+        } catch {
+          await refreshBites();
+        }
+      })();
+    },
+    [refreshBites]
+  );
+
+  const deleteBite = useCallback((biteId: string) => {
+    setBites((prev) => prev.filter((b) => b.id !== biteId));
+    if (Platform.OS !== 'web') return;
+    fetch('/api/public?action=deleteBite', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: biteId }),
+    }).catch(() => {});
+  }, []);
+
+  const toggleBiteLike = useCallback((biteId: string) => {
+    setBites((prev) =>
+      prev.map((b) =>
+        b.id === biteId
+          ? { ...b, liked: !b.liked, likeCount: Math.max(0, (b.likeCount || 0) + (b.liked ? -1 : 1)) }
+          : b
+      )
+    );
+    if (Platform.OS !== 'web') return;
+    fetch('/api/public?action=biteLike', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: biteId }),
+    }).catch(() => {});
+  }, []);
 
   // 팔로우 상태를 서버 followingIds 기준으로 각 게시물 작성자에 반영.
   const postsView = useMemo(() => {
@@ -661,18 +921,26 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
       followCounts,
       bites,
       addBite,
-      stamps,
-      collectStamp,
+      editBite,
+      deleteBite,
+      toggleBiteLike,
+      passport,
+      passportGoal,
+      passportReward,
+      pickRegion,
+      refreshPassport,
       toggleSave,
       toggleFollow,
       addComment,
+      editComment,
+      deleteComment,
       editPost,
       deletePost,
       addPost,
       profileAvatar,
       setProfileAvatar,
     }),
-    [me, postsView, myPosts, refreshFeed, refreshMyPosts, updateMe, followCounts, bites, addBite, stamps, collectStamp, toggleSave, toggleFollow, addComment, editPost, deletePost, addPost, profileAvatar, setProfileAvatar]
+    [me, postsView, myPosts, refreshFeed, refreshMyPosts, updateMe, followCounts, bites, addBite, editBite, deleteBite, toggleBiteLike, passport, passportGoal, passportReward, pickRegion, refreshPassport, toggleSave, toggleFollow, addComment, editComment, deleteComment, editPost, deletePost, addPost, profileAvatar, setProfileAvatar]
   );
 
   return <FeedContext.Provider value={value}>{children}</FeedContext.Provider>;

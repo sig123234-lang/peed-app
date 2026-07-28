@@ -91,7 +91,9 @@ export function UserProfileScreen() {
     openDmWith({ id: user.id, name: user.name, handle: user.handle, avatar: user.avatar });
   };
 
-  const gridImgs = posts.filter((p) => p.image);
+  // 사진 없이 올린 글도 프로필에는 보여준다. 홈 피드에만 안 뜰 뿐이고,
+  // 서버가 이미 비공개 글은 걸러서 주므로(handleUserPosts) 여기 온 건 다 볼 수 있는 글이다.
+  const gridImgs = posts;
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={closeUser}>
@@ -167,7 +169,22 @@ export function UserProfileScreen() {
                 <View style={styles.grid}>
                   {gridImgs.map((p) => (
                     <View key={p.id} style={styles.gridItem}>
-                      <Image source={{ uri: p.image }} style={styles.gridImg} contentFit="cover" />
+                      {p.image ? (
+                        <Image source={{ uri: p.image }} style={styles.gridImg} contentFit="cover" />
+                      ) : (
+                        // 이용 사진 없이 올린 글 — 영수증 조각처럼 글자로 보여준다.
+                        <View style={[styles.gridImg, styles.gridNote]}>
+                          <Text style={styles.gridNoteStore} numberOfLines={2}>
+                            {p.store || '리뷰'}
+                          </Text>
+                          {!!p.rating && (
+                            <Text style={styles.gridNoteStar}>★ {Number(p.rating).toFixed(1)}</Text>
+                          )}
+                          <Text style={styles.gridNoteBody} numberOfLines={3}>
+                            {p.caption || ''}
+                          </Text>
+                        </View>
+                      )}
                       {p.isBurning && (
                         <View style={styles.burnDot}>
                           <Text style={styles.burnTxt}>🔥</Text>
@@ -273,6 +290,28 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 2, marginTop: spacing.lg },
   gridItem: { width: CELL, height: CELL },
   gridImg: { width: '100%', height: '100%', backgroundColor: colors.surfaceAlt },
+  // 사진 없는 글 타일 — 영수증 종이 느낌으로 글자만 얹는다.
+  gridNote: {
+    backgroundColor: colors.paper,
+    borderWidth: 1,
+    borderColor: colors.line,
+    padding: spacing.sm,
+    justifyContent: 'center',
+    gap: 2,
+  },
+  gridNoteStore: {
+    fontSize: 11.5,
+    fontWeight: '900',
+    color: colors.paperInk,
+    lineHeight: 15,
+  },
+  gridNoteStar: { fontSize: 10.5, fontWeight: '800', color: colors.tangerine },
+  gridNoteBody: {
+    fontSize: 10,
+    lineHeight: 14,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
   burnDot: { position: 'absolute', top: 6, right: 6 },
   burnTxt: { fontSize: 14 },
   empty: { alignItems: 'center', paddingTop: 60, gap: spacing.sm },

@@ -191,6 +191,7 @@ export default function BurningScreen({ onPressReview }: BurningScreenProps) {
           photos: Array.isArray(s.photos) ? s.photos : [],
           menus: Array.isArray(s.menus) ? s.menus : [],
           phone: s.phone || '',
+          hours: s.hours || '',
         }));
         setRemote(items);
       })

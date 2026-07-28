@@ -113,6 +113,69 @@ async function geocodeAddr(q: string): Promise<{ lat: number; lng: number } | nu
   }
 }
 
+// "11:00-22:00" / "11:00 - 22:00" 등을 "11:00 ~ 22:00" 로 통일.
+function normHours(s: string): string {
+  return s.replace(/\s+/g, ' ').replace(/\s*[-–~]\s*/g, ' ~ ').trim();
+}
+
+// 네이버 플레이스 HTML 에서 영업시간을 최대한 뽑아낸다.
+// 구조가 자주 바뀌므로 여러 패턴을 순서대로 시도하고, 못 찾으면 '' 를 준다
+// (어드민이 직접 입력/수정할 수 있게 필드는 열어 둔다).
+function parseHours(html: string): string {
+  // -1) 명시적 '24시간' 표기 우선 (24시간 영업/운영/연중무휴 등).
+  if (/24\s*시간\s*(영업|운영|연중|이용)/.test(html) || /"[^"]*24시간[^"]*(영업|운영)[^"]*"/.test(html)) {
+    return '24시간';
+  }
+
+  // 0) 네이버의 구조화된 요일별 영업시간(StartEndTime) 배열에서 대표값을 뽑는다.
+  //    실제 응답 형태: "businessHours":{"__typename":"StartEndTime","start":"11:00","end":"22:00"}
+  //    24시간은 00:00~24:00(또는 00:00~00:00) 로 온다 → '24시간' 으로 표기.
+  const pairs: string[] = [];
+  const re =
+    /"__typename"\s*:\s*"StartEndTime"\s*,\s*"start"\s*:\s*"([0-2]?\d:[0-5]\d)"\s*,\s*"end"\s*:\s*"([0-2]?\d:[0-5]\d)"/g;
+  let mm: RegExpExecArray | null;
+  while ((mm = re.exec(html)) && pairs.length < 12) {
+    const s = mm[1];
+    const e = mm[2];
+    pairs.push(s === '00:00' && (e === '24:00' || e === '00:00') ? '24시간' : `${s} ~ ${e}`);
+  }
+  if (pairs.length) {
+    const uniq = Array.from(new Set(pairs));
+    // 여는 날 시간이 모두 같으면 그 시간대, 다르면 대표(첫) 시간대. (요일별 세부는 어드민이 보완)
+    return uniq.length === 1 ? uniq[0] : pairs[0];
+  }
+
+  // 1) 단순 문자열 필드
+  const simple = first(html, [
+    /"bizHour"\s*:\s*"([^"]{4,80})"/,
+    /"businessHours"\s*:\s*"([^"]{4,80})"/,
+    /"runningTime"\s*:\s*"([^"]{4,80})"/,
+    /"time"\s*:\s*"([0-2]?\d:[0-5]\d[^"]{0,40}[0-2]?\d:[0-5]\d)"/,
+  ]);
+  if (simple) return normHours(decodeEntities(simple));
+
+  // 2) 구조화된 시작/종료 시각 한 쌍
+  const st = first(html, [
+    /"startTime"\s*:\s*"([0-2]?\d:[0-5]\d)"/,
+    /"start"\s*:\s*"([0-2]?\d:[0-5]\d)"/,
+    /"openTime"\s*:\s*"([0-2]?\d:[0-5]\d)"/,
+  ]);
+  const et = first(html, [
+    /"endTime"\s*:\s*"([0-2]?\d:[0-5]\d)"/,
+    /"end"\s*:\s*"([0-2]?\d:[0-5]\d)"/,
+    /"closeTime"\s*:\s*"([0-2]?\d:[0-5]\d)"/,
+  ]);
+  if (st && et) return `${st} ~ ${et}`;
+
+  // 3) '영업/운영시간' 키워드 근처의 시간 범위
+  const near = html.match(
+    /(?:영업시간|운영시간|영업|이용시간)[\s\S]{0,80}?([0-2]?\d:[0-5]\d)\s*[-–~]\s*([0-2]?\d:[0-5]\d)/
+  );
+  if (near) return `${near[1]} ~ ${near[2]}`;
+
+  return '';
+}
+
 function parsePlace(html: string) {
   const name = decodeEntities(
     first(html, [
@@ -195,7 +258,9 @@ function parsePlace(html: string) {
     menus.push({ name: mname, price });
   }
 
-  return { name, category, roadAddress, address, phone, lat, lng, photos, menus };
+  const hours = parseHours(html);
+
+  return { name, category, roadAddress, address, phone, hours, lat, lng, photos, menus };
 }
 
 export default async function handler(req: any, res: any) {
