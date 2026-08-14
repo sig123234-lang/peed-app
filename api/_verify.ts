@@ -120,9 +120,6 @@ export type ScanRecord = {
   receipt: ReceiptVerdict;
   /** 촬영 메타데이터 — 글자와 무관한 두 번째 증거. */
   exif: ShotMeta;
-  resolvedStore: string;
-  burning: boolean;
-  reward: number;
 };
 
 export async function readScans(): Promise<ScanRecord[]> {
@@ -170,6 +167,9 @@ const FLAGS: Record<string, { label: string; weight: number }> = {
   // 영수증에 찍힌 결제 시각이 미래다 — 판독 오류라기엔 다른 항목이 멀쩡한 경우가 많다.
   receipt_future: { label: '결제 시각이 미래', weight: 40 },
   shot_missing: { label: '영수증 사진 없음', weight: 35 },
+  // 영수증 주소의 구(區)가 고른 매장과 다르다. 판독이 반쯤 무너져도 구까지 틀리게
+  // 읽는 일은 드물어서, 이건 '다른 데서 받은 영수증' 일 가능성이 높다.
+  place_mismatch: { label: '영수증 주소와 선택한 매장이 다름', weight: 40 },
   // 결제가 나오기 전에 찍힌 사진 — 남의 영수증을 미리 받아 둔 경로에서 나온다.
   shot_before_payment: { label: '결제보다 먼저 찍힌 사진', weight: 30 },
   same_store_day: { label: '같은 매장 같은 날 2번째 적립', weight: 25 },
@@ -180,8 +180,8 @@ const FLAGS: Record<string, { label: string; weight: number }> = {
   // 촬영 정보가 통째로 없다 — 메신저로 받은 사진일 수 있다. 다만 갤러리 앱·브라우저가
   // 다시 인코딩하면서 지우는 일도 흔해서, 단독으로는 검수 대상이 되지 않게 둔다.
   shot_meta_stripped: { label: '촬영 정보 없는 사진', weight: 20 },
-  // 영수증 상호는 감열지 판독이라 자주 흔들린다. 예전 캡처 방식(30)보다 낮게 둔다.
-  store_mismatch: { label: '입력 매장명과 영수증 상호 불일치', weight: 20 },
+  // 목록에서 고르지 않고 이름을 직접 적었다 — 대조할 매장 자체가 없다는 뜻이다.
+  place_missing: { label: '매장을 목록에서 고르지 않음', weight: 20 },
   daily_volume: { label: '하루 작성량 과다', weight: 15 },
   ocr_unreadable: { label: '사진을 읽지 못함', weight: 15 },
   receipt_undated: { label: '영수증 날짜를 읽지 못함', weight: 15 },
@@ -195,6 +195,9 @@ const FLAGS: Record<string, { label: string; weight: number }> = {
   // 시각·기종은 남았지만 GPS 는 없었다. 혼자서는 아무 의미가 없고, 다른 신호와
   // 겹칠 때만 눈금 하나를 더한다.
   shot_no_gps: { label: '위치 정보 없는 사진', weight: 5 },
+  // 매장은 골랐는데 영수증에 주소가 안 찍혔거나 못 읽어서 맞춰 보지 못했다.
+  // 간이영수증처럼 애초에 주소가 없는 종이도 많아, 회원 잘못으로 보지 않는다.
+  place_unconfirmed: { label: '영수증으로 매장을 확인하지 못함', weight: 5 },
 };
 
 // 한 가지 사건이 여러 이름으로 불리는 것을 막는다.

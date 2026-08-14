@@ -1,4 +1,3 @@
-import { loadBurningStores, matchBurningStore } from './_match';
 import {
   bytesHash,
   decodeDataUrl,
@@ -24,12 +23,18 @@ import {
 
 // 리뷰 인증 API — 유저는 방문한 매장의 영수증 사진 한 장만 올리면 된다.
 //
-//   POST /api/verify?action=scan  { shot, exif? }  → 영수증 판독 → 매장 힌트·주의 문구
+//   POST /api/verify?action=scan  { shot, exif? }  → 영수증 판독 → 결제 사실·주의 문구
 //
 // 예전에는 다른 플랫폼의 '리뷰 쓰기 완료' 화면을 캡처하게 했다. 그건 "다른 데
 // 리뷰를 썼다" 는 증거지 "이 매장에 갔다" 는 증거가 아니었고, 리뷰를 PEED 밖에서
 // 쓰게 만든다는 더 큰 문제가 있었다. 이제 리뷰는 PEED 안에서 쓰고, 방문 증거만
 // 영수증이 맡는다. 일회용 인증 코드(GET ?action=code)도 같은 이유로 없앴다.
+//
+// **여기서 매장을 판정하지 않는다.** 영수증에 찍히는 상호는 사업자등록증상의 이름이라
+// 간판과 다른 경우가 흔하고, 감열지 판독은 절반쯤 무너지는 게 정상이다. 매장은 회원이
+// /api/public?action=searchPlace 로 골라 확정하고, 이 API 는 넷만 답한다 —
+// **영수증이 맞나 / 언제 얼마를 썼나 / 중복이 아닌가 / 직접 찍은 사진인가.**
+// 영수증에서 읽은 주소·전화는 나중에 고른 매장과 맞춰 보는 용도로만 넘긴다.
 //
 // 판독 결과는 scanId 로 서버에 잠깐 보관한다. /api/review 가 그 id 로 결과를
 // 이어받으므로 같은 사진을 두 번 올리지 않고, OCR 도 한 번만 돈다.
@@ -105,15 +110,7 @@ async function handleScan(uid: string, body: any, res: any) {
   // 여전히 증거이고, 못 읽은 것은 위험 신호(ocr_unreadable / not_receipt)로 남는다.
   const byteHash = bytesHash(image.buf);
   const textHash = textFingerprint(best.text);
-  const [dup, stores] = await Promise.all([
-    findDuplicateShot({ byteHash, textHash, receiptKey: verdict.key }),
-    loadBurningStores(),
-  ]);
-
-  // 영수증에서 읽은 상호로 버닝 매장을 찾아 둔다 — 유저가 버닝인 줄 몰라도 잡힌다.
-  // 다만 여기서 정한 값은 화면에 미리 보여주기 위한 것이고, 최종 판정은 회원이 적어
-  // 넣은 매장명으로 /api/review 가 다시 한다(감열지 상호는 자주 흔들린다).
-  const match = verdict.hints.store ? matchBurningStore(verdict.hints.store, stores) : null;
+  const dup = await findDuplicateShot({ byteHash, textHash, receiptKey: verdict.key });
 
   // 증거용으로 사진을 남긴다. 위험 신호가 없으면 /api/review 가 바로 지운다.
   const saved = await saveDataUrl(String(body?.shot || ''));
@@ -132,9 +129,6 @@ async function handleScan(uid: string, body: any, res: any) {
     dupKind: dup ? dup.kind : '',
     receipt: verdict,
     exif: meta,
-    resolvedStore: match ? match.store.name : verdict.hints.store,
-    burning: !!match,
-    reward: match ? match.store.reward : 2,
   };
 
   await saveScan(rec);
@@ -169,19 +163,9 @@ async function handleScan(uid: string, body: any, res: any) {
   res.status(200).json({
     ok: true,
     scanId: rec.id,
-    // 회원이 확인만 하면 되도록 채워 주는 값. 별점·본문은 채우지 않는다 —
-    // 영수증에는 없는 값이고, 리뷰는 PEED 안에서 직접 쓰는 것이 이 방식의 요지다.
-    fields: {
-      store: rec.resolvedStore,
-      category: match ? match.store.category : '',
-      // 등록 매장이면 그 지역, 아니면 영수증 주소(구까지 찍혀 있다).
-      region: match ? match.store.region : verdict.hints.address,
-    },
-    burning: rec.burning,
-    reward: rec.reward,
-    // 영수증에서 읽은 원래 상호 — 버닝으로 승격됐을 때 화면에서 알려 주려고 같이 준다.
-    scannedStore: verdict.hints.store,
-    // "이 영수증이 맞나" 를 화면에서 확인시켜 주는 값들.
+    // "이 영수증이 맞나" 를 화면에서 눈으로 확인시켜 주는 값들.
+    // 매장명·별점·본문은 여기서 채우지 않는다 — 매장은 회원이 골라 확정하고,
+    // 별점과 리뷰는 PEED 안에서 직접 쓴다. 그게 이 방식의 요지다.
     receipt: {
       isReceipt: verdict.isReceipt,
       confidence: verdict.confidence,

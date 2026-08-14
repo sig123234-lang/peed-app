@@ -64,10 +64,10 @@ const STEPS = [
     tip: '상호·사업자번호·결제일시가 보이게 반듯하게 찍어주세요. 2주 안의 영수증이면 OK.',
   },
   {
-    emoji: '💎',
+    emoji: '📍',
     grad: gradients.teal,
-    title: '매장명·지역은\n자동으로 채워져요',
-    tip: 'PEED가 영수증을 읽어 매장명·지역을 채워요. 별점과 리뷰만 적으면 PB가 바로 적립돼요.',
+    title: '매장을\n골라요',
+    tip: '이름을 치면 지점 목록이 떠요. 고르면 주소·지역이 자동으로 채워지고 도장도 정확히 찍혀요.',
   },
   {
     emoji: '📷',
@@ -95,6 +95,18 @@ type FieldKey = 'store' | 'rating' | 'comment';
 
 /** 사진에서 읽어 서버로 같이 보내는 촬영 정보 — 글자와 무관한 두 번째 증거. */
 type ShotExif = { shotAt: number; hasGps: boolean };
+
+/** 매장 검색 결과 한 줄(/api/public?action=searchPlace). */
+type PlaceItem = {
+  id: string;
+  source: 'peed' | 'kakao';
+  name: string;
+  category: string;
+  address: string;
+  region: string;
+  burning: boolean;
+  reward: number;
+};
 
 // 별점 옆에 붙는 말. 숫자만 있으면 4.5 가 좋은 점수인지 감이 안 온다.
 const RATING_WORDS = ['별로예요', '아쉬워요', '괜찮아요', '좋아요', '최고예요'];
@@ -223,13 +235,16 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
   const [scanDone, setScanDone] = useState(false);
   const [scanErr, setScanErr] = useState('');
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [autoBurning, setAutoBurning] = useState(false);
-  const [autoReward, setAutoReward] = useState(2);
-  const [scannedStore, setScannedStore] = useState('');
   // 영수증에서 읽은 결제 사실 — "이 영수증이 맞나"를 유저가 눈으로 확인하는 자리.
   const [receipt, setReceipt] = useState<{ at: number; total: number } | null>(null);
 
-  // 폼 (판독 결과로 자동 채워지고, 유저가 고칠 수 있다)
+  // 매장 — 이름을 치면 지점 목록에서 고른다. 고른 매장이 곧 주소·지역·버닝 여부다.
+  const [place, setPlace] = useState<PlaceItem | null>(null);
+  const [suggests, setSuggests] = useState<PlaceItem[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // 폼
   const [storeName, setStoreName] = useState('');
   const [category, setCategory] = useState('');
   const [location, setLocation] = useState('');
@@ -341,9 +356,6 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
     // 예전 scanId 가 그대로 남아, 지금 리뷰에 **전에 올린 사진**이 증거로 붙는다.
     setReceipt(null);
     setScanId('');
-    setScannedStore('');
-    setAutoBurning(false);
-    setAutoReward(2);
     try {
       const r = await fetch('/api/verify?action=scan', {
         method: 'POST',
@@ -365,22 +377,11 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
       }
       setScanId(String(d.scanId || ''));
       setWarnings(Array.isArray(d.warnings) ? d.warnings : []);
-      setAutoBurning(!!d.burning);
-      setAutoReward(Number(d.reward) || 2);
-      setScannedStore(String(d.scannedStore || ''));
 
+      // 영수증이 답하는 건 '언제 얼마를 썼나' 까지다. 매장은 위에서 직접 고르고,
+      // 별점·리뷰는 여기서 쓴다 — 영수증에 없는 값이라 채울 것도 없다.
       const rc = d.receipt || {};
       setReceipt({ at: Number(rc.at) || 0, total: Number(rc.total) || 0 });
-
-      // 매장명·지역처럼 '옮겨 적기만 하는' 값만 자동으로 채운다.
-      //
-      // 별점·본문은 영수증에 없는 값이라 채울 것도 없다. 그게 이 방식으로 바꾼
-      // 이유이기도 하다 — 예전 캡처 방식은 남의 플랫폼에 쓴 리뷰를 가져오는 흐름이라,
-      // 판독한 본문을 얹어 주면 PEED 피드가 그 복사본이 되어 버렸다.
-      const f = d.fields || {};
-      if (f.store) setStoreName(String(f.store));
-      if (f.category) setCategory(String(f.category));
-      if (f.region) setLocation(String(f.region));
       setScanDone(true);
     } catch {
       setScanErr('판독에 실패했어요. 아래에 직접 입력해 주세요.');
@@ -388,6 +389,56 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
     } finally {
       setScanning(false);
     }
+  };
+
+  /* ---------------------------------------------------------- 매장 찾기 */
+
+  // 타자가 멈추면 찾는다. 글자마다 보내면 카카오 한도를 회원 몇 명이 다 써버린다
+  // (서버에도 분당 제한이 걸려 있어 그때는 결과가 아예 안 온다).
+  useEffect(() => {
+    const q = storeName.trim();
+    if (place && place.name === q) return;   // 방금 고른 것을 다시 찾지 않는다
+    if (q.length < 2) {
+      setSuggests([]);
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const r = await fetch(`/api/public?action=searchPlace&q=${encodeURIComponent(q)}`, {
+          credentials: 'include',
+        });
+        const d = await r.json();
+        if (!alive) return;
+        setSuggests(Array.isArray(d?.items) ? d.items.slice(0, 8) : []);
+      } catch {
+        if (alive) setSuggests([]);
+      } finally {
+        if (alive) setSearching(false);
+      }
+    }, 350);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [storeName, place]);
+
+  const pickPlace = (p: PlaceItem) => {
+    setPlace(p);
+    setStoreName(p.name);
+    if (p.category) setCategory(p.category);
+    // 지역은 도장 패스포트가 쓰는 값이라, 주소 전체가 아니라 '서울 양천구' 를 넣는다.
+    setLocation(p.region || p.address);
+    setSuggests([]);
+    setPickerOpen(false);
+  };
+
+  // 고른 뒤에 이름을 고치면 그 매장을 고른 것으로 볼 수 없다. 확정을 풀고 다시 찾는다.
+  const onStoreNameChange = (v: string) => {
+    setStoreName(v);
+    if (place && v.trim() !== place.name) setPlace(null);
+    setPickerOpen(true);
   };
 
   /* ---------------------------------------------------------- 태그 */
@@ -416,7 +467,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
   const missing = useMemo(() => {
     const out: { key: FieldKey; label: string; msg: string }[] = [];
     if (!storeName.trim()) {
-      out.push({ key: 'store', label: '매장명', msg: '매장명을 적어주세요' });
+      out.push({ key: 'store', label: '매장', msg: '매장을 골라주세요' });
     }
     if (rating === null) {
       out.push({ key: 'rating', label: '만족도', msg: '별점을 골라주세요' });
@@ -432,7 +483,10 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
   }, [storeName, rating, comment]);
 
   const isFormValid = missing.length === 0;
-  const rewardPb = autoBurning ? autoReward : 2;
+  // 버닝 여부·적립액은 고른 매장에서 나온다. 최종 판정은 서버가 다시 하지만(클라가
+  // 보낸 값을 믿지 않는다), 화면에는 고르는 즉시 보여 줘야 "이 집이 10PB구나" 를 안다.
+  const burning = !!place?.burning;
+  const rewardPb = burning ? place?.reward || 10 : 2;
 
   /**
    * 영수증에서 읽은 결제 사실 한 줄 — "8월 12일 · 32,000원".
@@ -469,7 +523,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
     }
     const reward = rewardPb;
     setEarnedPb(reward);
-    setAwardedBurning(autoBurning);
+    setAwardedBurning(burning);
     earn(reward);
 
     const store = storeName.trim();
@@ -489,7 +543,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
         location,
         people: Number(peopleCount.replace(/[^0-9]/g, '')) || 1,
         price: Number(String(totalPrice).replace(/[^0-9]/g, '')) || 0,
-        isBurning: autoBurning,
+        isBurning: burning,
         earnedPb: reward,
         isPrivate: !isPublic,
         stampRegion,
@@ -508,6 +562,9 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
         author: me.name,
         handle: me.handle,
         store,
+        // 고른 매장은 id 만 보낸다. 주소·버닝 여부까지 보내면 서버가 그걸 믿는 셈이라,
+        // 서버는 이 id 로 자기가 내보냈던 원본을 되찾아 쓴다.
+        placeId: place?.id || '',
         rating: rating ?? 5,
         caption,
         location,
@@ -826,7 +883,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
               tone="brand"
               step={1}
               title="영수증"
-              desc="영수증을 올리면 매장명·지역이 채워져요"
+              desc="방문했다는 증거예요. 매장은 아래에서 골라요"
               status={shotStatus}
               statusTone={shotImage && !scanErr && !scanning ? 'lime' : 'brand'}
             >
@@ -861,7 +918,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
                       상호·사업자번호·결제일시가 보이게 찍어주세요
                     </Text>
                     <View style={styles.autoFillRow}>
-                      {['매장명', '지역', '방문 확인'].map((t) => (
+                      {['방문 확인', '결제일시', '중복 확인'].map((t) => (
                         <View key={t} style={styles.autoFillChip}>
                           <Ionicons name="sparkles" size={10} color={colors.primary} />
                           <Text style={styles.autoFillText}>{t}</Text>
@@ -880,8 +937,8 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
                   icon="checkmark-circle"
                   text={
                     receiptLine
-                      ? `영수증을 읽었어요 · ${receiptLine}. 별점과 리뷰 내용만 적어주세요.`
-                      : '영수증을 확인했어요. 별점과 리뷰 내용만 적어주세요.'
+                      ? `영수증을 읽었어요 · ${receiptLine}. 아래에서 매장을 고르고 리뷰를 적어주세요.`
+                      : '영수증을 확인했어요. 아래에서 매장을 고르고 리뷰를 적어주세요.'
                   }
                 />
               )}
@@ -904,7 +961,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
               tone="coral"
               step={2}
               title="내용 확인"
-              desc="매장명은 확인만, 별점·리뷰 내용은 직접 적어주세요"
+              desc="매장은 목록에서 고르고, 별점·리뷰는 직접 적어주세요"
               status={isFormValid ? '확인 완료' : `필수 ${filled}/3`}
               statusTone={isFormValid ? 'lime' : 'coral'}
               onLayout={(e) => {
@@ -916,30 +973,76 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
                   fieldY.current.store = e.nativeEvent.layout.y;
                 }}
               >
-                <FieldLabel text="매장명" required error={errAt('store')} />
-                <TextInput
-                  ref={storeRef}
-                  style={[styles.input, errAt('store') && styles.inputErr]}
-                  placeholder="예: 멘노아지 강남역신분당선점"
-                  placeholderTextColor={colors.textTertiary}
-                  value={storeName}
-                  onChangeText={setStoreName}
-                />
-                {errAt('store') ? (
-                  <ErrText text="매장명을 적어주세요" />
-                ) : autoBurning ? (
-                  <View style={styles.burnPill}>
-                    <Text style={styles.burnPillText}>
-                      🔥 버닝 매장이에요 · {autoReward}PB 적립
-                    </Text>
+                <FieldLabel text="매장" required error={errAt('store')} />
+                <View style={styles.pickWrap}>
+                  <TextInput
+                    ref={storeRef}
+                    style={[styles.input, errAt('store') && styles.inputErr]}
+                    placeholder="매장 이름을 치면 지점이 떠요 (예: 순백회관)"
+                    placeholderTextColor={colors.textTertiary}
+                    value={storeName}
+                    onChangeText={onStoreNameChange}
+                    onFocus={() => setPickerOpen(true)}
+                  />
+                  {searching && (
+                    <ActivityIndicator size="small" color={colors.primary} style={styles.pickSpin} />
+                  )}
+                  {/* 고른 매장은 체크로 확실히 표시한다. 이 화면에서 '고름' 과 '쳐 넣음'
+                      은 뒤에서 전혀 다르게 취급되므로(주소·지역·버닝이 확정되느냐),
+                      어느 쪽인지 유저가 한눈에 알아야 한다. */}
+                  {!!place && !searching && (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={20}
+                      color={colors.limeInk}
+                      style={styles.pickSpin}
+                    />
+                  )}
+                </View>
+
+                {pickerOpen && suggests.length > 0 && (
+                  <View style={styles.suggestBox}>
+                    {suggests.map((s) => (
+                      <TouchableOpacity
+                        key={s.id}
+                        style={styles.suggestRow}
+                        onPress={() => pickPlace(s)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.suggestName} numberOfLines={1}>
+                            {s.burning ? '🔥 ' : ''}
+                            {s.name}
+                          </Text>
+                          <Text style={styles.suggestAddr} numberOfLines={1}>
+                            {[s.category, s.address].filter(Boolean).join(' · ')}
+                          </Text>
+                        </View>
+                        {s.burning && (
+                          <Text style={styles.suggestReward}>{s.reward}PB</Text>
+                        )}
+                      </TouchableOpacity>
+                    ))}
                   </View>
+                )}
+
+                {errAt('store') ? (
+                  <ErrText text="매장을 골라주세요" />
+                ) : place ? (
+                  <>
+                    <Text style={styles.helper}>{place.address}</Text>
+                    {burning && (
+                      <View style={styles.burnPill}>
+                        <Text style={styles.burnPillText}>
+                          🔥 버닝 매장이에요 · {rewardPb}PB 적립
+                        </Text>
+                      </View>
+                    )}
+                  </>
                 ) : (
                   <Text style={styles.helper}>
-                    간판에 적힌 이름 그대로 적으면 버닝 매장이 자동으로 인식돼요
+                    목록에서 고르면 주소·지역이 자동으로 채워지고 도장도 정확히 찍혀요
                   </Text>
-                )}
-                {!!scannedStore && scannedStore !== storeName && (
-                  <Text style={styles.helper}>영수증에서 읽은 상호: {scannedStore}</Text>
                 )}
               </View>
 
@@ -1886,6 +1989,31 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   burnPillText: { fontSize: 12.5, fontWeight: '800', color: colors.coralDeep },
+
+  /* ---- 매장 찾기 ---- */
+  pickWrap: { justifyContent: 'center' },
+  // 입력칸 오른쪽 안쪽 — 찾는 중이면 스피너, 고르고 나면 체크가 같은 자리에 선다.
+  pickSpin: { position: 'absolute', right: spacing.md },
+  suggestBox: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    overflow: 'hidden',
+  },
+  suggestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  suggestName: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
+  suggestAddr: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  suggestReward: { fontSize: 12.5, fontWeight: '800', color: colors.coralDeep },
 
   /* ---- 별점 ---- */
   starRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },

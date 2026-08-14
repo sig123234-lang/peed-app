@@ -208,10 +208,14 @@ export async function searchPlaces(query: string, size = 15): Promise<SearchResu
 
   const key = `${q}#${size}`;
   const cached = cacheGet(key);
-  if (cached) return { items: cached, external: KAKAO_KEY ? 'ok' : 'off' };
+  if (cached) {
+    remember(cached);
+    return { items: cached, external: KAKAO_KEY ? 'ok' : 'off' };
+  }
 
   const [peed, kakao] = await Promise.all([peedStores(q), kakaoSearch(q, size)]);
   const items = dedupe(peed, kakao);
+  remember(items);
 
   // 카카오가 죽었는데 캐시에 넣으면 10분 동안 반쪽 결과가 굳는다.
   const external: SearchResult['external'] = !KAKAO_KEY
@@ -222,6 +226,120 @@ export async function searchPlaces(query: string, size = 15): Promise<SearchResu
   if (external !== 'error') cacheSet(key, items);
 
   return { items, external };
+}
+
+/* ------------------------------------------------------ 고른 매장 되찾기 */
+
+// 회원이 고른 매장은 id 만 서버로 올라온다. 주소·전화·버닝 여부까지 클라이언트가
+// 보내게 하면 그 값을 그대로 믿는 셈이 되어(예전에 burning 을 클라가 보내던 시절과
+// 같은 실수), 아무 매장이나 골라 놓고 주소만 버닝 매장 것으로 바꿔 보낼 수 있다.
+// 그래서 검색해서 내보낸 원본을 서버가 잠깐 들고 있다가 id 로 되찾아 쓴다.
+//
+// 리뷰 한 건은 보통 몇 분 안에 끝나므로 30분이면 넉넉하다. 재시작하거나 시간이
+// 지나 못 찾으면 '확정할 수 없음' 으로 흘러갈 뿐, 적립이 막히지는 않는다.
+const PLACE_TTL_MS = 30 * 60 * 1000;
+const PLACE_MAX = 2000;
+const seen = new Map<string, { at: number; place: Place }>();
+
+function remember(items: Place[]): void {
+  const now = Date.now();
+  for (const p of items) {
+    seen.delete(p.id);
+    seen.set(p.id, { at: now, place: p });
+  }
+  while (seen.size > PLACE_MAX) {
+    const oldest = seen.keys().next().value;
+    if (oldest === undefined) break;
+    seen.delete(oldest);
+  }
+}
+
+/** 회원이 고른 매장의 원본. 못 찾으면 null(만료됐거나 서버가 재시작했다). */
+export function lookupPlace(id: string): Place | null {
+  const hit = seen.get(String(id || ''));
+  if (!hit) return null;
+  if (Date.now() - hit.at > PLACE_TTL_MS) {
+    seen.delete(id);
+    return null;
+  }
+  return hit.place;
+}
+
+/* --------------------------------------------------------- 전화번호 판별 */
+
+/**
+ * 이 번호로 '어느 지점인가' 를 가릴 수 있는가.
+ *
+ * 실측(2026-08-14)에서 두 종류가 걸러졌다.
+ *   · 대표번호 — 스타벅스 목동점·동탄목동점·오목로점·SBS점이 전부 1522-3232 다.
+ *     번호가 맞아도 지점은 아무것도 증명되지 않는다(사업자등록번호도 마찬가지다.
+ *     직영 프랜차이즈는 본사 번호 하나를 전 지점이 함께 쓴다).
+ *   · 안심번호(0507·050x) — 등록 매장 '나누리흑염소전문점' 이 0507-1323-7047 인데
+ *     실제 매장 번호는 02-3394-7047 이다. 영수증에 찍히는 쪽과 애초에 다르다.
+ *
+ * 그래서 이 둘은 일치해도 근거로 세지 않는다. 지점 식별의 근거는 주소다.
+ */
+export function phoneIdentifiesBranch(phone: string): boolean {
+  const d = digits(phone);
+  if (d.length < 9) return false;
+  if (/^1[5678]\d{2}/.test(d)) return false;   // 15xx·16xx·17xx·18xx 대표번호
+  if (/^080/.test(d)) return false;            // 수신자부담 대표번호
+  if (/^050/.test(d)) return false;            // 안심번호(0507 등)
+  return true;
+}
+
+/* --------------------------------------------------- 영수증과 맞춰 보기 */
+
+export type PlaceCheck = {
+  state: 'confirmed' | 'mismatch' | 'unknown';
+  /** 무엇으로 판단했는지 — 어드민 검수에서 이유를 볼 수 있어야 한다. */
+  how: string;
+};
+
+/** 도로명 주소에서 '오목로 337-20' 같은 길 이름+번지만 남긴다. */
+function roadKey(address: string): string {
+  const m = String(address || '').match(/([가-힣A-Za-z0-9]+(?:로|길))\s*(\d+(?:-\d+)?)/);
+  return m ? `${m[1]} ${m[2]}` : '';
+}
+
+/**
+ * 회원이 고른 매장과 영수증이 같은 곳을 가리키는지 본다.
+ *
+ * 근거는 주소다. 전화번호는 프랜차이즈 대표번호·안심번호 때문에 지점을 못 가리고,
+ * 사업자등록번호도 직영 프랜차이즈는 본사 번호가 전 지점 공통이라 마찬가지다
+ * (phoneIdentifiesBranch 주석의 실측 참고). 주소만 지점마다 반드시 다르다.
+ *
+ * 무엇도 차단하지 않는다 — 결과는 위험 점수로만 쓰인다(정책: 지급하되 플래그).
+ */
+export function checkPlaceAgainstReceipt(
+  place: Place,
+  receipt: { address: string; phone: string }
+): PlaceCheck {
+  const receiptRegion = (() => {
+    const m = matchRegion(receipt.address || '');
+    return m ? regionKey(m) : '';
+  })();
+
+  if (receiptRegion && place.region) {
+    if (receiptRegion !== place.region) {
+      return { state: 'mismatch', how: `영수증 ${receiptRegion} ≠ 선택 ${place.region}` };
+    }
+    const a = roadKey(place.address);
+    const b = roadKey(receipt.address);
+    if (a && b && a === b) return { state: 'confirmed', how: `도로명 일치(${a})` };
+    return { state: 'confirmed', how: `지역 일치(${receiptRegion})` };
+  }
+
+  // 주소를 못 읽었을 때만 전화번호를 본다. 지점을 가릴 수 있는 번호일 때 한정이다.
+  const rp = digits(receipt.phone);
+  if (rp && phoneIdentifiesBranch(place.phone) && phoneIdentifiesBranch(rp)) {
+    if (rp === place.phone) return { state: 'confirmed', how: '전화번호 일치' };
+    // 영수증에는 매장 번호 말고 다른 번호(주문·본사)가 찍히기도 해서, 다르다는
+    // 것만으로 부정으로 보지 않는다. 근거가 없는 것으로 남긴다.
+    return { state: 'unknown', how: '전화번호 불일치(근거로 세지 않음)' };
+  }
+
+  return { state: 'unknown', how: '영수증에서 주소를 읽지 못함' };
 }
 
 /* ------------------------------------------------------------ 호출 제한 */

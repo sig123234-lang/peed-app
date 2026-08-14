@@ -1,5 +1,6 @@
-import { resolveStore, similarity } from './_match';
+import { resolveStore } from './_match';
 import * as passport from './_passport';
+import { checkPlaceAgainstReceipt, lookupPlace } from './_places';
 import { readUid, readUserCookie } from './_session';
 import { deleteKey, getJSON, putJSON, storeConfigured } from './_store';
 import {
@@ -13,11 +14,14 @@ import * as wallet from './_wallet';
 import { matchRegion, regionKey } from '../data/regions';
 
 // Public: 앱에서 작성한 리뷰를 서버에 저장 → 어드민의 당첨자 후기 자동 매칭 + 리뷰 PB 적립.
-//   POST /api/review { author, handle?, store?, rating?, caption?, district?, location?, scanId? }
+//   POST /api/review { author, handle?, store?, placeId?, rating?, caption?, location?, scanId? }
 //
-// 방문 증거는 영수증이 맡는다(/api/verify?action=scan 이 판독해 scanId 로 넘긴다).
-// 리뷰 본문·별점·매장명은 회원이 PEED 안에서 직접 적으므로, 영수증이 답해야 할
-// 질문은 셋뿐이다 — 영수증이 맞나 / 중복이 아닌가 / 최근 것인가.
+// 인증은 두 가지가 맞물려 성립한다.
+//   · 매장 — 회원이 검색해서 지점까지 고른다(placeId). 서버는 그 id 로 원본을 되찾아
+//     쓰므로, 클라이언트가 보낸 주소·버닝 여부를 믿지 않는다.
+//   · 방문 — 영수증이 맡는다(scanId). 영수증이 답하는 것은 '영수증이 맞나 / 언제
+//     얼마를 썼나 / 중복이 아닌가' 이고, 매장이 어디인지는 답하지 않는다.
+// 그리고 둘을 맞춰 본다 — 영수증 주소의 구(區)가 고른 매장과 같은가.
 //
 // 버닝 여부는 서버가 정한다. 예전에는 클라이언트가 보낸 burning 값을 그대로 믿어서,
 // 유저가 버닝 매장인 줄 모르고 '일반 리뷰'로 올리면 10PB 대신 2PB만 들어갔다.
@@ -56,14 +60,18 @@ export default async function handler(req: any, res: any) {
 
     // ── 영수증 판독 결과 이어받기 ──
     const scan = await takeScan(String(b?.scanId || ''), uid);
-    const receiptStore = scan?.receipt?.hints?.store || '';
+
+    // ── 고른 매장 되찾기 ──
+    // id 만 받고 원본은 서버가 들고 있던 것을 쓴다. 주소·버닝 여부를 클라이언트가
+    // 보내게 하면 그걸 믿는 셈이 되기 때문이다(예전에 burning 을 클라가 보내던
+    // 시절과 같은 실수). 못 찾으면 직접 입력한 것과 같게 취급한다.
+    const place = lookupPlace(String(b?.placeId || ''));
 
     // ── 버닝 판정(서버 권위) ──
-    // 매장명은 회원이 직접 적는다. 영수증에서 읽은 상호는 감열지 판독이라 자주
-    // 흔들리므로 보조 근거로만 쓴다 — 적어 넣은 이름이 비었을 때만 대신 세운다.
-    // (예전 캡처 방식에서는 반대였다. 앱이 그려낸 글자라 판독 쪽이 더 정확했다.)
-    const resolved = await resolveStore(typedStore || receiptStore);
-    const storeName = resolved.storeName || typedStore;
+    // 고른 매장의 이름으로 등록 매장을 조회한다. 등록 매장이면 지금 시점의 리워드가
+    // 나오고, 아니면 일반 2PB 다. 매장을 못 고른 경우에만 적어 넣은 이름을 쓴다.
+    const resolved = await resolveStore(place?.name || typedStore);
+    const storeName = resolved.storeName || place?.name || typedStore;
 
     // ── 위험 신호 모으기 ──
     const flagCodes: string[] = [];
@@ -81,10 +89,20 @@ export default async function handler(req: any, res: any) {
       else if (scan.dupKind === 'text') {
         flagCodes.push(scan.dupOf === uid ? 'dup_text' : 'dup_image');
       }
+    }
 
-      if (typedStore && receiptStore && similarity(typedStore, receiptStore) < 0.8) {
-        flagCodes.push('store_mismatch');
-      }
+    // ── 고른 매장과 영수증 맞춰 보기 ──
+    let placeCheck = { state: 'unknown' as 'confirmed' | 'mismatch' | 'unknown', how: '' };
+    if (!place) {
+      flagCodes.push('place_missing');
+      placeCheck = { state: 'unknown', how: '매장을 목록에서 고르지 않음' };
+    } else if (scan) {
+      placeCheck = checkPlaceAgainstReceipt(place, {
+        address: scan.receipt.hints.address,
+        phone: scan.receipt.hints.phone,
+      });
+      if (placeCheck.state === 'mismatch') flagCodes.push('place_mismatch');
+      else if (placeCheck.state === 'unknown') flagCodes.push('place_unconfirmed');
     }
     if (uid) {
       const mine = reviews.filter((r) => r.uid === uid).slice(0, 60);
@@ -102,8 +120,25 @@ export default async function handler(req: any, res: any) {
       rating: Number(b?.rating) || 0,
       caption,
       burning: resolved.burning,
-      // '검증됨' = 영수증 사진이 있고, 영수증으로 읽혔고, 중복이 아님.
-      verified: !!scan && scan.receipt.isReceipt && !scan.dupOf,
+      // '검증됨' = 매장을 골랐고, 영수증으로 읽혔고, 중복이 아니고, 둘이 어긋나지 않음.
+      // 영수증에 주소가 안 찍혀 대조를 못 한 경우(unknown)까지 막지는 않는다 — 그건
+      // 그 영수증에 정보가 없는 것이지 회원의 잘못이 아니다.
+      verified:
+        !!place && !!scan && scan.receipt.isReceipt && !scan.dupOf &&
+        placeCheck.state !== 'mismatch',
+      // 고른 매장 — 어디까지 확정된 값인지 함께 남긴다.
+      place: place
+        ? {
+            id: place.id,
+            name: place.name,
+            address: place.address,
+            phone: place.phone,
+            lat: place.lat,
+            lng: place.lng,
+            check: placeCheck.state,
+            checkHow: placeCheck.how,
+          }
+        : null,
       // 영수증에서 읽은 사실. 사업자등록번호는 상호 표기가 흔들려도 같은 매장을
       // 하나로 묶는 고유키라, 어드민 검수와 나중의 매장 집계를 위해 남긴다.
       receipt: scan
@@ -146,17 +181,20 @@ export default async function handler(req: any, res: any) {
         );
         rec.awarded = true;
 
-        // 지역 판별 — 등록 매장이면 그 주소가 가장 정확하다. 아니면 영수증에서 읽은
-        // 주소, 클라가 준 지역/위치, 마지막으로 매장명·본문에서 찾는다.
-        let source = `${resolved.region || ''} ${resolved.address || ''}`.trim();
-        // 영수증 주소에는 구(區)까지 찍혀 있어 등록 주소만큼 정확하다. 캡처 방식에서
-        // 화면 귀퉁이의 "서울 강남구 역삼동" 을 긁던 것보다 근거가 확실하다.
-        if (!source) source = scan?.receipt?.hints?.address || '';
-        if (!source.trim()) source = `${b?.district || ''} ${b?.location || ''}`;
-        if (!source.trim()) source = `${rec.store} ${rec.caption}`;
-
-        const matched = matchRegion(source);
-        region = matched ? regionKey(matched) : '';
+        // 지역 판별 — 회원이 고른 매장이 있으면 거기서 끝난다. 지점까지 특정된
+        // 주소라 추측할 것이 없다. 예전에는 매장명·본문에서 지역을 긁어내야 했고,
+        // 그래서 '지역을 판별하지 못함' 플래그가 필요했다.
+        if (place?.region) {
+          region = place.region;
+        } else {
+          let source = `${resolved.region || ''} ${resolved.address || ''}`.trim();
+          // 영수증 주소에는 구(區)까지 찍혀 있어 등록 주소만큼 정확하다.
+          if (!source) source = scan?.receipt?.hints?.address || '';
+          if (!source.trim()) source = `${b?.district || ''} ${b?.location || ''}`;
+          if (!source.trim()) source = `${rec.store} ${rec.caption}`;
+          const matched = matchRegion(source);
+          region = matched ? regionKey(matched) : '';
+        }
         rec.region = region;
 
         // 지역을 못 찾으면 이 리뷰는 도장이 영영 안 찍힌다. 그런데 지금까지는

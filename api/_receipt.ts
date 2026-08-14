@@ -125,7 +125,13 @@ export function findBizNo(raw: string): { bizNo: string; valid: boolean } {
   }
 
   // ② 라벨이 없거나 못 읽었으면 `000-00-00000` 모양을 통째로 훑는다.
-  const loose = text.match(/\d{3}\s*[-–—~.\s]\s*\d{2}\s*[-–—~.\s]\s*\d{5}/g);
+  //
+  // 앞뒤로 숫자가 더 붙어 있으면 사업자번호가 아니다. 실측(2026-08-14)에서 영수증번호
+  // `20260504-01-00861` 의 뒤쪽을 잘라 `504-01-00861` 을 사업자번호로 집어냈고,
+  // 하필 체크섬까지 우연히 통과해 엉뚱한 번호가 매장 고유키로 박혔다.
+  const loose = text.match(
+    /(?<![\d-])\d{3}\s*[-–—~.\s]\s*\d{2}\s*[-–—~.\s]\s*\d{5}(?!\d)/g
+  );
   if (loose) {
     for (const m of loose) {
       const d = m.replace(/\D/g, '');

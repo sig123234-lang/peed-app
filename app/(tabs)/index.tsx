@@ -63,11 +63,11 @@ const HOW_STEPS = [
     body: '상호·사업자번호·결제일시가 보이게 찍어주세요. 2주 안의 영수증이면 돼요.',
   },
   {
-    icon: 'sparkles-outline' as const,
+    icon: 'location-outline' as const,
     tint: colors.grape,
     soft: colors.grapeSoft,
-    title: '매장명·지역은 알아서 채워져요',
-    body: 'PEED가 영수증을 읽어서 입력해요. 맞는지 확인만 하면 끝.',
+    title: '매장을 골라요',
+    body: '이름을 치면 지점까지 떠요. 고르면 주소·지역이 알아서 따라와요.',
   },
   {
     icon: 'create-outline' as const,
