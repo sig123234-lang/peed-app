@@ -12,7 +12,10 @@ import path from 'path';
 // 그래서 이미지 라이브러리 의존성 없이 파일 → tesseract → 텍스트로 끝낸다.
 
 const BIN = process.env.PEED_TESSERACT || 'tesseract';
-const TIMEOUT_MS = Number(process.env.PEED_OCR_TIMEOUT_MS || 25000);
+// 25초로는 모자랐다. 실측(2026-08-14)에서 잘 읽힌 판(긴 변 2400)도 21초가 걸렸고,
+// 그보다 큰 판은 25초에 걸려 **빈 문자열**로 돌아왔다 — 판독 실패가 아니라 시간 초과인데
+// 호출한 쪽에서는 구분이 안 돼 '못 읽는 사진'으로 보였다. 실제 유저 제출 2건이 그랬다.
+const TIMEOUT_MS = Number(process.env.PEED_OCR_TIMEOUT_MS || 45000);
 const MAX_BYTES = 12 * 1024 * 1024;
 
 /** 동시 실행 상한 — 램 1.8G 서버에서 OCR 한 번이 ~90MB를 쓴다. 넘치면 줄을 세운다. */
@@ -115,6 +118,21 @@ const MAGICK = process.env.PEED_MAGICK || 'convert';
 // 여기 상한은 병적으로 큰 입력(스캐너 원본 등)만 막는 안전장치다.
 const MAX_EDGE = Number(process.env.PEED_OCR_MAX_EDGE || 4200);
 
+// 다만 '줄이지 않는다' 를 폰 원본 사진에까지 적용한 것이 실서비스에서 탈이 났다.
+// 위 실측은 **영수증만 담긴 crop** 을 줄였을 때의 이야기였는데, 유저가 실제로 올리는
+// 것은 배경(책상·손·옷)까지 들어간 1200만 화소 원본이다. 거기서는 반대로 나온다.
+//   실측(2026-08-14, 갤럭시 3000x4000 원본 2장):
+//     긴 변 3000 → 두 장 다 신뢰도 0 (게다가 25초 초과)
+//     긴 변 2400 → 0.72(사업자번호 체크섬 통과) / 0.42(전화·일시)
+//     긴 변 1800 → 0.24 / 0.28
+// 영수증 글자가 tesseract 가 좋아하는 크기보다 **너무 크면** 오히려 못 읽는다.
+//
+// 그래서 두 측정값 사이를 잇지 않고, 각각이 측정된 지점에 그대로 둔다.
+//   · 800만 화소를 넘는 입력(= 폰 카메라 원본) → 긴 변 2400 으로 줄인다
+//   · 그 이하(= 이미 잘라낸 영수증, 4.7백만 화소) → 손대지 않는다
+const BIG_INPUT_PIXELS = Number(process.env.PEED_OCR_BIG_PIXELS || 8_000_000);
+const PHOTO_EDGE = Number(process.env.PEED_OCR_PHOTO_EDGE || 2400);
+
 let magickOk: boolean | null = null;
 export async function preprocessAvailable(): Promise<boolean> {
   if (magickOk !== null) return magickOk;
@@ -188,9 +206,23 @@ function run(bin: string, args: string[], timeoutMs: number): Promise<string | n
  * 국소 적응 이진화(-lat)도 재봤지만 감열지에서는 오히려 나빴다(맞춘 항목 6 → 3).
  * 감열 인쇄의 부드러운 농담을 뭉개버린다. 회색조 + normalize 가 가장 좋았다.
  */
+/**
+ * 판독 전에 줄일 크기를 정한다 — 폰 원본이면 긴 변 2400, 아니면 안전장치 상한만.
+ * 판단 근거는 위 BIG_INPUT_PIXELS 주석에 적어 뒀다.
+ */
+async function resizeTarget(srcPath: string): Promise<{ spec: string; photo: boolean }> {
+  const raw = await run(IDENTIFY, ['-format', '%w %h', `${srcPath}[0]`], 8000);
+  const [w, h] = String(raw || '').trim().split(/\s+/).map(Number);
+  if (!w || !h) return { spec: `${MAX_EDGE}x${MAX_EDGE}>`, photo: false };
+  return w * h > BIG_INPUT_PIXELS
+    ? { spec: `${PHOTO_EDGE}x${PHOTO_EDGE}>`, photo: true }
+    : { spec: `${MAX_EDGE}x${MAX_EDGE}>`, photo: false };
+}
+
 async function prepare(srcPath: string, rotate: number): Promise<string | null> {
   if (!(await preprocessAvailable())) return null;
   const out = `${srcPath}.pp.png`;
+  const resize = await resizeTarget(srcPath);
   const args = [
     '-limit', 'memory', '256MB',
     '-limit', 'map', '512MB',
@@ -201,10 +233,22 @@ async function prepare(srcPath: string, rotate: number): Promise<string | null> 
   if (rotate) args.push('-rotate', String(rotate));
   args.push(
     '-colorspace', 'Gray',
-    '-resize', `${MAX_EDGE}x${MAX_EDGE}>`,   // '>' = 더 큰 경우에만 줄인다
-    '-normalize',
-    out
+    '-resize', resize.spec,    // '>' = 더 큰 경우에만 줄인다
   );
+  // 줄인 사진에만 아주 약하게 흐림을 준다.
+  //
+  // 처음 이 값을 찾은 건 우연이었다. 실측용으로 미리 줄여 둔 JPEG 로 잰 판은
+  // 사업자등록번호를 읽었는데, 같은 처리를 한 번에 이어서 한 판은 못 읽었다.
+  // 둘의 유일한 차이가 중간에 낀 JPEG 재인코딩이었다 — 그 손실이 감열지의 얼룩을
+  // 눌러 주고 있었다. 그래서 같은 효과를 눈에 보이는 한 줄로 바꿔 놓는다.
+  //   실측(2026-08-14, 스타벅스 영수증 3000x4000):
+  //     흐림 없음 → 사업자번호 못 읽음(글자 1510)
+  //     -blur 0x0.5 → 201-81-21515 읽음(글자 1939)   ← 채택
+  //     -blur 0x0.8 / -gaussian-blur 0x0.6 / -despeckle → 다시 못 읽음
+  // 잘라낸 영수증(축소 안 하는 쪽)에는 적용하지 않는다. 거기서 재 본 적이 없고,
+  // 원래도 잘 읽히던 경로를 검증 없이 건드릴 이유가 없다.
+  if (resize.photo) args.push('-blur', '0x0.5');
+  args.push('-normalize', out);
   const r = await run(MAGICK, args, 20000);
   if (r === null) return null;
   try {
@@ -336,10 +380,15 @@ export async function readText(image: ImageBytes, opts: ReadOpts = {}): Promise<
 export async function readTextBestOf(
   image: ImageBytes,
   score: (text: string) => number,
-  opts: { angles?: number[]; enough?: number } = {}
+  opts: { angles?: number[]; enough?: number; budgetMs?: number } = {}
 ): Promise<{ text: string; rotate: number; score: number }> {
   const angles = opts.angles ?? [0, 90, 270];
   const enough = opts.enough ?? 0.5;
+  // 각도를 다 돌리면 최악 45초×3 이라 유저가 기다리다 나간다. 한 판이라도 끝났으면
+  // 예산을 넘긴 시점에서 멈춘다 — 남은 각도에서 더 나은 결과가 나올 가능성보다
+  // 응답이 오지 않는 손해가 크다.
+  const budgetMs = opts.budgetMs ?? 70000;
+  const started = Date.now();
 
   // 글자 수가 아니라 **점수**로 고른다. 예전에는 "쓸 만한가" 를 참/거짓으로 물었는데,
   // 그러면 문턱을 못 넘은 판들이 전부 동점이 되어 결국 글자가 많은 쪽(= 배경 잡음이
@@ -351,6 +400,7 @@ export async function readTextBestOf(
     const s = score(text);
     if (s > best.score) best = { text, rotate, score: s };
     if (s >= enough) break;   // 충분히 좋으면 남은 각도는 돌리지 않는다
+    if (Date.now() - started > budgetMs) break;
   }
   return best;
 }

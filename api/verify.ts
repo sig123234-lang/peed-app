@@ -86,8 +86,15 @@ async function handleScan(uid: string, body: any, res: any) {
   // 각도를 돌려가며 읽는 이유는 _ocr.readTextBestOf 에 적어 뒀다. 점수는 판독 결과의
   // 신뢰도(사업자번호 체크섬·전화·일시…)를 그대로 쓴다 — 영수증에는 정답지가 있어서
   // "방향이 맞았나" 를 추측이 아니라 계산으로 고를 수 있다.
+  // enough 0.35 는 "영수증인지 판정하기엔 충분한" 지점이다. 실측(2026-08-14)에서 폰 원본
+  // 두 장이 첫 판(0도)에 0.76 / 0.40 을 냈는데, 문턱이 0.5 였을 때는 0.40 짜리가 남은
+  // 각도를 다 돌리느라 83초가 걸렸다 — 이미 사업자번호 체크섬까지 통과한 판을 들고서.
+  // 눕혀 찍은 영수증을 구제하는 회전 재시도는 그대로 두되, 이미 읽힌 건 더 뒤지지 않는다.
   const [best, exif] = await Promise.all([
-    readTextBestOf(image, (t) => parseReceipt(t, now).confidence, { enough: 0.5 }),
+    readTextBestOf(image, (t) => parseReceipt(t, now).confidence, {
+      enough: 0.35,
+      budgetMs: 55000,
+    }),
     readExif(image),
   ]);
 
@@ -135,7 +142,9 @@ async function handleScan(uid: string, body: any, res: any) {
   // 유저에게 보여줄 주의 문구 — 적립을 막지는 않는다(정책: 지급하되 플래그).
   const warnings: string[] = [];
   if (!verdict.isReceipt) {
-    warnings.push('영수증이 아닌 것 같아요. 글자가 잘 보이게 다시 찍어 주세요.');
+    // 실측에서 판독을 살리고 죽인 것은 화질이 아니라 '영수증이 화면에서 차지하는 비율'
+    // 이었다. 배경(책상·손)이 넓게 들어갈수록 나빠진다. 그래서 조명이 아니라 구도를 말한다.
+    warnings.push('영수증이 화면에 꽉 차게, 반듯하게 다시 찍어 주세요.');
   }
   if (dup) {
     warnings.push(
