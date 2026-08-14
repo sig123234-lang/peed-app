@@ -1,4 +1,5 @@
 import { resolveStore } from './_match';
+import { ocrAvailable } from './_ocr';
 import * as passport from './_passport';
 import { checkPlaceAgainstReceipt, lookupPlace } from './_places';
 import { readUid, readUserCookie } from './_session';
@@ -28,8 +29,11 @@ import { matchRegion, regionKey } from '../data/regions';
 // 유저가 버닝 매장인 줄 모르고 '일반 리뷰'로 올리면 10PB 대신 2PB만 들어갔다.
 // 이제는 매장명을 등록된 버닝 매장과 대조해 같은 곳이면 자동으로 승격시킨다.
 //
-// 부정 인증은 막지 않고 점수만 매긴다(정책: 지급은 하되 플래그). 위험 신호가 있는
-// 건만 영수증 사진을 증거로 남기고 어드민 모더레이션 목록에 올린다.
+// 부정 인증은 대부분 막지 않고 점수만 매긴다(정책: 지급은 하되 플래그). 위험 신호가
+// 있는 건만 영수증 사진을 증거로 남기고 어드민 모더레이션 목록에 올린다.
+//
+// 예외는 셋뿐이고, 셋 다 '애매하지 않은' 것들이다 — 영수증을 아예 안 냈거나, 이미 쓴
+// 영수증이거나, 기한이 지난 영수증이면 저장도 지급도 하지 않는다.
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     res.status(405).json({ ok: false, error: 'method_not_allowed' });
@@ -90,6 +94,22 @@ export default async function handler(req: any, res: any) {
       else if (scan.dupKind === 'text') {
         flagCodes.push(scan.dupOf === uid ? 'dup_text' : 'dup_image');
       }
+    }
+
+    // ── 영수증 없이는 받지 않는다 ──
+    // 방문 증거가 하나도 없는 리뷰에 PB 를 주면, 중복·기한을 막아 둔 것이 무의미해진다
+    // (영수증을 빼고 내는 게 가장 쉬운 우회로가 된다).
+    //
+    // 다만 판독기가 죽어 있을 때는 예외다. 그때는 회원이 영수증을 올리고 싶어도 올릴
+    // 방법이 없으므로(스캔 API 가 ocr_unavailable 로 되돌려보낸다), 여기서 막으면
+    // 판독기 장애가 리뷰 기능 전체의 장애가 된다. 그런 건은 예전처럼 플래그로만 남긴다.
+    if (!scan && (await ocrAvailable())) {
+      res.status(200).json({
+        ok: false,
+        error: 'receipt_required',
+        reason: '영수증 사진으로 방문을 인증해 주세요.',
+      });
+      return;
     }
 
     // ── 받을 수 없는 영수증이면 여기서 끝낸다 ──

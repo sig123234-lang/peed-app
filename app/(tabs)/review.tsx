@@ -92,7 +92,10 @@ const MODAL_MAX_H = Math.round(Dimensions.get('window').height * 0.92);
 const INTRO_W = Math.min(CARD_W - spacing.lg * 2, 440);
 
 /** 필수 칸. 비면 제출을 막고, 어느 칸이 비었는지 이름으로 알려준다. */
-type FieldKey = 'store' | 'rating' | 'comment';
+type FieldKey = 'shot' | 'store' | 'rating' | 'comment';
+
+/** 필수 칸 개수 — 영수증·매장·별점·리뷰 내용. */
+const REQUIRED = 4;
 
 /** 사진에서 읽어 서버로 같이 보내는 촬영 정보 — 글자와 무관한 두 번째 증거. */
 type ShotExif = { shotAt: number; hasGps: boolean };
@@ -275,7 +278,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
   const [attempted, setAttempted] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const confirmCardY = useRef(0);
-  const fieldY = useRef<Record<FieldKey, number>>({ store: 0, rating: 0, comment: 0 });
+  const fieldY = useRef<Record<FieldKey, number>>({ shot: 0, store: 0, rating: 0, comment: 0 });
   const storeRef = useRef<TextInput>(null);
   const commentRef = useRef<TextInput>(null);
 
@@ -489,6 +492,11 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
   // 있는 채로 시작하므로, 무엇이 비었는지 이름으로 알려 주고 눌러도 반응하게 둔다.
   const missing = useMemo(() => {
     const out: { key: FieldKey; label: string; msg: string }[] = [];
+    // 영수증이 없으면 '이 매장에 갔다' 는 증거가 하나도 없다. 중복·기한을 막아 놓고
+    // 영수증 없는 제출만 열어 두면 그게 제일 쉬운 우회로가 되므로 필수로 둔다.
+    if (!shotImage) {
+      out.push({ key: 'shot', label: '영수증', msg: '영수증 사진을 올려주세요' });
+    }
     if (!storeName.trim()) {
       out.push({ key: 'store', label: '매장', msg: '매장을 골라주세요' });
     }
@@ -503,7 +511,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
       });
     }
     return out;
-  }, [storeName, rating, comment]);
+  }, [shotImage, storeName, rating, comment]);
 
   const isFormValid = missing.length === 0;
   // 버닝 여부·적립액은 고른 매장에서 나온다. 최종 판정은 서버가 다시 하지만(클라가
@@ -532,6 +540,11 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
 
   /** 빈 칸으로 데려간다. 카드가 접혀 있지 않아도 화면 밖이면 못 보기 때문이다. */
   const goToField = (k: FieldKey) => {
+    // 영수증은 맨 위 카드라 좌표를 잴 것 없이 처음으로 올리면 된다.
+    if (k === 'shot') {
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+      return;
+    }
     const y = confirmCardY.current + fieldY.current[k] + spacing.lg - 24;
     scrollRef.current?.scrollTo({ y: Math.max(0, y), animated: true });
     if (k === 'store') storeRef.current?.focus();
@@ -605,7 +618,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
         // 서버가 영수증을 거절했다 — 화면에서 미리 막지 못한 경우(창을 두 개 띄워
         // 같은 영수증을 동시에 낸 경우 등)다. 미리 더해 둔 PB 를 되돌리고 폼으로
         // 돌아가 이유를 보여 준다. 글도 만들지 않는다.
-        if (d?.ok === false && d.error === 'receipt_blocked') {
+        if (d?.ok === false && (d.error === 'receipt_blocked' || d.error === 'receipt_required')) {
           earn(-reward);
           setBlocked(String(d.reason || '이 영수증으로는 인증할 수 없어요.'));
           setStage('form');
@@ -867,11 +880,16 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
   const shotStatus = scanning
     ? '읽는 중'
     : !shotImage
-      ? '권장'
-      : scanErr
-        ? '직접 입력'
-        : '자동 입력됨';
-  const filled = 3 - missing.length;
+      ? '필수'
+      : blocked
+        ? '다시 올려주세요'
+        : scanErr
+          ? '읽지 못함'
+          : '확인됨';
+  // 위 진행 막대는 필수 네 칸(영수증·매장·별점·리뷰) 기준.
+  const filled = REQUIRED - missing.length;
+  // '내용 확인' 카드의 표시는 그 카드가 담은 세 칸만 센다.
+  const formFilled = 3 - missing.filter((m) => m.key !== 'shot').length;
   const ratingWord =
     rating === null
       ? ''
@@ -912,7 +930,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
                 end={{ x: 1, y: 0 }}
                 style={[
                   styles.progressFill,
-                  { width: `${Math.round((filled / 3) * 100)}%` as `${number}%` },
+                  { width: `${Math.round((filled / REQUIRED) * 100)}%` as `${number}%` },
                 ]}
               />
             </View>
@@ -924,7 +942,13 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
               title="영수증"
               desc="방문했다는 증거예요. 매장은 아래에서 골라요"
               status={shotStatus}
-              statusTone={shotImage && !scanErr && !scanning ? 'lime' : 'brand'}
+              statusTone={
+                shotImage && !scanErr && !blocked && !scanning
+                  ? 'lime'
+                  : errAt('shot')
+                    ? 'coral'
+                    : 'brand'
+              }
             >
               {pending ? (
                 <ReceiptCropper
@@ -976,6 +1000,8 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
               </TouchableOpacity>
               )}
 
+              {errAt('shot') && <ErrText text="영수증 사진을 올려주세요" />}
+
               {scanning && <Notice tone="info" busy text="영수증을 읽고 있어요…" />}
 
               {/* 막힌 사유는 맨 위에, 단독으로. 다른 안내와 섞이면 "그래도 되나 보다"
@@ -1015,7 +1041,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
               step={2}
               title="내용 확인"
               desc="매장은 목록에서 고르고, 별점·리뷰는 직접 적어주세요"
-              status={isFormValid ? '확인 완료' : `필수 ${filled}/3`}
+              status={isFormValid ? '확인 완료' : `필수 ${formFilled}/3`}
               statusTone={isFormValid ? 'lime' : 'coral'}
               onLayout={(e) => {
                 confirmCardY.current = e.nativeEvent.layout.y;
