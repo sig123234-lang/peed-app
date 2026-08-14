@@ -36,9 +36,9 @@ const SLIDES = [
     body: '놀고, 먹고, 즐기고, 마시고\n이미 쓴 돈이라면 남겨봐.',
   },
   {
-    tag: '리뷰 한 번, 캡처 한 장',
+    tag: '영수증 한 장이면 돼',
     title: '30초면\n충분해',
-    body: '쓰던 리뷰에 코드만 붙이고\n캡처 한 장 올리면 끝.',
+    body: '먹고 받은 영수증 찍고\n한 줄만 남기면 끝.',
   },
   {
     tag: 'REVIEW → REWARD',
@@ -49,32 +49,32 @@ const SLIDES = [
 
 const HOW_STEPS = [
   {
-    icon: 'key-outline' as const,
+    icon: 'receipt-outline' as const,
     tint: colors.primary,
     soft: colors.primarySoft,
-    title: '인증 코드를 받아요',
-    body: 'PEED가 나만의 일회용 코드를 하나 줘요. 예: PEED-A3F9)',
-  },
-  {
-    icon: 'create-outline' as const,
-    tint: colors.tangerine,
-    soft: colors.tangerineSoft,
-    title: '네이버 리뷰 맨 앞에 붙여요',
-    body: '평소 쓰던 대로 리뷰를 쓰되, 맨 앞에 받은 코드만 붙여주세요.',
+    title: '영수증을 챙겨요',
+    body: '방문한 매장의 영수증이면 돼요. 다른 앱에 리뷰를 쓰거나 코드를 붙일 필요 없어요.',
   },
   {
     icon: 'camera-outline' as const,
-    tint: colors.grape,
-    soft: colors.grapeSoft,
-    title: '완료 화면을 캡처해요',
-    body: "'리뷰 쓰기 완료!' 화면을 그대로 찍으면 돼요. 편집할 필요 없어요.",
+    tint: colors.tangerine,
+    soft: colors.tangerineSoft,
+    title: '영수증을 찍어 올려요',
+    body: '상호·사업자번호·결제일시가 보이게 찍어주세요. 2주 안의 영수증이면 돼요.',
   },
   {
     icon: 'sparkles-outline' as const,
+    tint: colors.grape,
+    soft: colors.grapeSoft,
+    title: '매장명·지역은 알아서 채워져요',
+    body: 'PEED가 영수증을 읽어서 입력해요. 맞는지 확인만 하면 끝.',
+  },
+  {
+    icon: 'create-outline' as const,
     tint: colors.teal,
     soft: colors.tealSoft,
-    title: '올리면 알아서 채워져요',
-    body: '매장명·별점·리뷰 내용을 PEED가 읽어서 자동으로 입력해요. 확인만 하면 끝.',
+    title: '리뷰는 PEED에 써요',
+    body: '별점 고르고 한 줄이면 충분해요. 다른 앱에 옮겨 적을 필요 없어요.',
   },
   {
     icon: 'diamond-outline' as const,
@@ -134,8 +134,8 @@ function HowToSheet({ visible, onClose }: { visible: boolean; onClose: () => voi
             <View style={[styles.noteCard, styles.noteWarn]}>
               <Text style={styles.noteTitle}>⚠ 부정 인증은 걸러져요</Text>
               <Text style={styles.noteText}>
-                인증 코드는 한 번 쓰면 소각돼요. 같은 캡처를 다시 올리거나 남의 캡처를 쓰면
-                자동으로 잡혀요.
+                같은 영수증은 한 번만 인증돼요. 승인번호가 영수증마다 달라서, 다시 찍거나
+                잘라내도 자동으로 잡혀요.
               </Text>
             </View>
           </ScrollView>

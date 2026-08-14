@@ -4,7 +4,6 @@ import { readUid, readUserCookie } from './_session';
 import { deleteKey, getJSON, putJSON, storeConfigured } from './_store';
 import {
   behaviourFlags,
-  burnCode,
   dropScan,
   rememberShot,
   scoreRisk,
@@ -16,12 +15,16 @@ import { matchRegion, regionKey } from '../data/regions';
 // Public: 앱에서 작성한 리뷰를 서버에 저장 → 어드민의 당첨자 후기 자동 매칭 + 리뷰 PB 적립.
 //   POST /api/review { author, handle?, store?, rating?, caption?, district?, location?, scanId? }
 //
+// 방문 증거는 영수증이 맡는다(/api/verify?action=scan 이 판독해 scanId 로 넘긴다).
+// 리뷰 본문·별점·매장명은 회원이 PEED 안에서 직접 적으므로, 영수증이 답해야 할
+// 질문은 셋뿐이다 — 영수증이 맞나 / 중복이 아닌가 / 최근 것인가.
+//
 // 버닝 여부는 서버가 정한다. 예전에는 클라이언트가 보낸 burning 값을 그대로 믿어서,
 // 유저가 버닝 매장인 줄 모르고 '일반 리뷰'로 올리면 10PB 대신 2PB만 들어갔다.
 // 이제는 매장명을 등록된 버닝 매장과 대조해 같은 곳이면 자동으로 승격시킨다.
 //
 // 부정 인증은 막지 않고 점수만 매긴다(정책: 지급은 하되 플래그). 위험 신호가 있는
-// 건만 캡처를 증거로 남기고 어드민 모더레이션 목록에 올린다.
+// 건만 영수증 사진을 증거로 남기고 어드민 모더레이션 목록에 올린다.
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     res.status(405).json({ ok: false, error: 'method_not_allowed' });
@@ -51,13 +54,15 @@ export default async function handler(req: any, res: any) {
     const typedStore = String(b?.store || '').trim();
     const caption = String(b?.caption || '').slice(0, 500);
 
-    // ── 캡처 판독 결과 이어받기 ──
+    // ── 영수증 판독 결과 이어받기 ──
     const scan = await takeScan(String(b?.scanId || ''), uid);
+    const receiptStore = scan?.receipt?.hints?.store || '';
 
     // ── 버닝 판정(서버 권위) ──
-    // 캡처에서 읽은 이름이 있으면 그쪽이 네이버플레이스 표기라 더 정확하다.
-    const nameForMatch = scan?.parsed?.store || typedStore;
-    const resolved = await resolveStore(nameForMatch || typedStore);
+    // 매장명은 회원이 직접 적는다. 영수증에서 읽은 상호는 감열지 판독이라 자주
+    // 흔들리므로 보조 근거로만 쓴다 — 적어 넣은 이름이 비었을 때만 대신 세운다.
+    // (예전 캡처 방식에서는 반대였다. 앱이 그려낸 글자라 판독 쪽이 더 정확했다.)
+    const resolved = await resolveStore(typedStore || receiptStore);
     const storeName = resolved.storeName || typedStore;
 
     // ── 위험 신호 모으기 ──
@@ -65,18 +70,19 @@ export default async function handler(req: any, res: any) {
     if (!scan) {
       flagCodes.push('shot_missing');
     } else {
-      if (!scan.ocrText.trim()) flagCodes.push('ocr_unreadable');
-      if (!scan.parsed.isReviewScreen) flagCodes.push('not_review_screen');
-      if (scan.codeState === 'missing') flagCodes.push('keyword_missing');
-      if (scan.codeState === 'plain') flagCodes.push('code_plain');
-      if (scan.codeState === 'reused') flagCodes.push('code_reused');
-      if (scan.codeState === 'foreign') flagCodes.push('code_foreign');
-      if (scan.dupOf) flagCodes.push(scan.dupOf === uid ? 'dup_text' : 'dup_image');
-      if (
-        typedStore &&
-        scan.parsed.store &&
-        similarity(typedStore, scan.parsed.store) < 0.8
-      ) {
+      // 영수증 판독이 매긴 신호를 그대로 이어받는다
+      // (영수증 아님 · 못 읽음 · 날짜 없음/오래됨/미래 · 촬영 정보).
+      flagCodes.push(...scan.receipt.flags);
+
+      // 중복은 무엇이 겹쳤는지에 따라 무게가 다르다. 영수증 고유키는 재촬영·크롭에도
+      // 그대로라 가장 강하고, 글자 지문이 겹친 건 내가 낸 것이면 재제출로 본다.
+      if (scan.dupKind === 'receipt') flagCodes.push('dup_receipt');
+      else if (scan.dupKind === 'image') flagCodes.push('dup_image');
+      else if (scan.dupKind === 'text') {
+        flagCodes.push(scan.dupOf === uid ? 'dup_text' : 'dup_image');
+      }
+
+      if (typedStore && receiptStore && similarity(typedStore, receiptStore) < 0.8) {
         flagCodes.push('store_mismatch');
       }
     }
@@ -96,8 +102,18 @@ export default async function handler(req: any, res: any) {
       rating: Number(b?.rating) || 0,
       caption,
       burning: resolved.burning,
-      verified: !!scan && scan.codeState === 'ok',
-      platform: String(b?.platform || scan?.parsed?.platform || '').trim().slice(0, 40),
+      // '검증됨' = 영수증 사진이 있고, 영수증으로 읽혔고, 중복이 아님.
+      verified: !!scan && scan.receipt.isReceipt && !scan.dupOf,
+      // 영수증에서 읽은 사실. 사업자등록번호는 상호 표기가 흔들려도 같은 매장을
+      // 하나로 묶는 고유키라, 어드민 검수와 나중의 매장 집계를 위해 남긴다.
+      receipt: scan
+        ? {
+            bizNo: scan.receipt.hints.bizNo,
+            at: scan.receipt.at,
+            total: scan.receipt.total,
+            confidence: scan.receipt.confidence,
+          }
+        : null,
       createdAt: Date.now(),
       date: new Date().toISOString().slice(0, 10),
       risk: risk.score,
@@ -130,11 +146,12 @@ export default async function handler(req: any, res: any) {
         );
         rec.awarded = true;
 
-        // 지역 판별 — 등록 매장이면 그 주소가 가장 정확하다. 아니면 캡처에서 읽은
-        // 지역, 클라가 준 지역/위치, 마지막으로 매장명·본문에서 찾는다.
+        // 지역 판별 — 등록 매장이면 그 주소가 가장 정확하다. 아니면 영수증에서 읽은
+        // 주소, 클라가 준 지역/위치, 마지막으로 매장명·본문에서 찾는다.
         let source = `${resolved.region || ''} ${resolved.address || ''}`.trim();
-        // 캡처에서 읽은 "서울 강남구 역삼동"은 구까지 들어 있어 등록 주소만큼 정확하다.
-        if (!source) source = scan?.parsed?.region || '';
+        // 영수증 주소에는 구(區)까지 찍혀 있어 등록 주소만큼 정확하다. 캡처 방식에서
+        // 화면 귀퉁이의 "서울 강남구 역삼동" 을 긁던 것보다 근거가 확실하다.
+        if (!source) source = scan?.receipt?.hints?.address || '';
         if (!source.trim()) source = `${b?.district || ''} ${b?.location || ''}`;
         if (!source.trim()) source = `${rec.store} ${rec.caption}`;
 
@@ -183,9 +200,9 @@ export default async function handler(req: any, res: any) {
       const reports = await getJSON<any[]>('v2/reports.json', []);
       const dupish = risk.flags.some((f) =>
         [
+          'dup_receipt',
           'dup_image',
           'dup_text',
-          'code_reused',
           'same_store_day',
           'same_store_spam',
           'caption_echo',
@@ -210,12 +227,14 @@ export default async function handler(req: any, res: any) {
       await putJSON('v2/reports.json', reports.slice(0, 5000));
     }
 
-    // 판독 뒷정리 — 코드를 소각하고 지문을 남긴다. 이걸로 같은 캡처 재제출이 잡힌다.
+    // 판독 뒷정리 — 지문을 남긴다. 이걸로 같은 영수증 재제출이 잡힌다.
+    // 영수증 고유키는 다시 찍거나 잘라내도 그대로라, 이미지 지문만 남기던 예전보다
+    // 확실하다(예전에는 재촬영 한 번이면 byteHash·textHash 가 둘 다 바뀌었다).
     if (scan) {
-      if (scan.codeState === 'ok') await burnCode(scan.codeValue, rec.id);
       await rememberShot({
         byteHash: scan.byteHash,
         textHash: scan.textHash,
+        receiptKey: scan.receiptKey,
         uid: uid || '',
         store: rec.store,
         ts: Date.now(),
