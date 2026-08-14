@@ -3,7 +3,7 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { routes, runDueDraws } from './build/routes.mjs';
+import { routes, runDueDraws, runPrizeUpkeep } from './build/routes.mjs';
 
 // PEED 독립 실행 서버.
 // 원래는 Vercel(정적 호스팅 + 서버리스 함수)에 올라가던 앱이라, 여기서 그 두 가지를
@@ -203,6 +203,17 @@ async function drawTick() {
     }
   } catch (e) {
     console.error('자동 추첨 실패:', e?.message || e);
+  }
+  // 추첨과 별개로 돌린다 — 추첨이 실패해도 수령·만료 처리는 계속돼야 한다.
+  try {
+    const r = await runPrizeUpkeep();
+    if (r.readied || r.expired || r.warned) {
+      console.log(
+        `경품 수령 정리: 수령가능 ${r.readied} · 만료임박알림 ${r.warned} · 만료 ${r.expired}`
+      );
+    }
+  } catch (e) {
+    console.error('경품 수령 정리 실패:', e?.message || e);
   }
 }
 

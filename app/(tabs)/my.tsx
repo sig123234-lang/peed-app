@@ -102,12 +102,20 @@ type EntryItem = {
   status: string;
 };
 
+type ClaimState = 'pending' | 'ready' | 'claimed' | 'expired';
+
 type WinItem = {
   id: string;
   title: string;
   image: any;
   wonDate: string;
   status: '수령전' | '배송중' | '수령완료';
+  method: string;
+  // 수령 상태 — 배송 상태(status)와 별개다. 상품권은 배송이 없고 '받아갔는가' 만 있다.
+  claim: ClaimState;
+  expiresAt: number | null;
+  claimedAt: number | null;
+  claimDays: number;
 };
 
 // 실 사용 전환 — 내 게시물은 서버(myPosts)에서만 온다. 데모 리뷰 제거.
@@ -170,15 +178,14 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
     })();
   }, []);
 
-  // 당첨 내역 = 어드민 추첨 결과 + 배송 상태(서버에서 합쳐서 내려준다).
+  // 당첨 내역 = 어드민 추첨 결과 + 배송/수령 상태(서버에서 합쳐서 내려준다).
   const [winItems, setWinItems] = useState<WinItem[]>([]);
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    let alive = true;
-    fetch('/api/public?action=myWins', { credentials: 'include' })
+  const loadWins = useCallback(() => {
+    if (Platform.OS !== 'web') return Promise.resolve();
+    return fetch('/api/public?action=myWins', { credentials: 'include' })
       .then((r) => r.json())
       .then((d) => {
-        if (!alive || !Array.isArray(d?.items)) return;
+        if (!Array.isArray(d?.items)) return;
         setWinItems(
           d.items.map((w: any) => ({
             id: w.id,
@@ -186,14 +193,55 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
             image: { uri: w.image || '' },
             wonDate: w.wonDate || '-',
             status: w.status || '수령전',
+            method: w.method || '',
+            claim: (w.claim || 'pending') as ClaimState,
+            expiresAt: Number(w.expiresAt) || null,
+            claimedAt: Number(w.claimedAt) || null,
+            claimDays: Number(w.claimDays) || 30,
           }))
         );
       })
       .catch(() => {});
-    return () => {
-      alive = false;
-    };
   }, []);
+  useEffect(() => {
+    loadWins();
+  }, [loadWins]);
+
+  // 수령 — 서버가 본인 확인 후 일련번호를 한 번 내려준다. 화면에만 들고 있고
+  // 저장하지 않는다(목록 응답에는 애초에 번호가 없다).
+  const [claiming, setClaiming] = useState('');
+  const [claimed, setClaimed] = useState<{ id: string; title: string; serial: string } | null>(null);
+  const [claimErr, setClaimErr] = useState('');
+
+  const claimPrize = async (item: WinItem) => {
+    setClaiming(item.id);
+    setClaimErr('');
+    try {
+      const r = await fetch('/api/public?action=claimPrize', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId: item.id }),
+      });
+      const d = await r.json();
+      if (d?.ok) {
+        setClaimed({ id: item.id, title: item.title, serial: String(d.serial || '') });
+        loadWins();
+      } else {
+        setClaimErr(
+          d?.error === 'expired'
+            ? '수령 기한이 지나 소멸된 경품이에요.'
+            : d?.error === 'not_ready'
+              ? '아직 준비 중이에요. 준비가 끝나면 알림으로 알려드릴게요.'
+              : '수령에 실패했어요. 잠시 후 다시 시도해 주세요.'
+        );
+      }
+    } catch {
+      setClaimErr('수령에 실패했어요. 연결을 확인해 주세요.');
+    } finally {
+      setClaiming('');
+    }
+  };
 
 
   // 도장 지역 선택창 — 프로필의 '도장' 칩과 패스포트 카드 양쪽에서 연다.
@@ -470,11 +518,17 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
     closeDetail();
   };
 
-  const winBadge = (status: WinItem['status']) => {
-    if (status === '수령전') return { wrap: styles.badgePending, text: styles.badgePendingText };
-    if (status === '배송중') return { wrap: styles.badgeShipping, text: styles.badgeShippingText };
-    return { wrap: styles.badgeDone, text: styles.badgeDoneText };
+  // 배송 상태가 아니라 '수령' 상태로 배지를 단다. 상품권은 배송이 없어서
+  // '배송중' 이라고 뜨면 오히려 뭘 기다리는지 헷갈린다.
+  const claimBadge = (c: ClaimState) => {
+    if (c === 'ready') return { label: '수령 가능', wrap: styles.badgeShipping, text: styles.badgeShippingText };
+    if (c === 'claimed') return { label: '수령완료', wrap: styles.badgeDone, text: styles.badgeDoneText };
+    if (c === 'expired') return { label: '기한만료', wrap: styles.badgeExpired, text: styles.badgeExpiredText };
+    return { label: '준비 중', wrap: styles.badgePending, text: styles.badgePendingText };
   };
+
+  const daysLeft = (exp: number | null) =>
+    exp ? Math.ceil((exp - Date.now()) / (24 * 3600 * 1000)) : null;
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
@@ -673,18 +727,79 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
         )}
         {activeTab === 'wins' && winItems.length > 0 && (
           <View style={styles.list}>
+            {!!claimErr && (
+              <View style={styles.claimErrBox}>
+                <Ionicons name="alert-circle" size={15} color="#B42318" />
+                <Text style={styles.claimErrText}>{claimErr}</Text>
+              </View>
+            )}
             {winItems.map((item) => {
-              const b = winBadge(item.status);
+              const c = claimBadge(item.claim);
+              const left = daysLeft(item.expiresAt);
               return (
-                <View key={item.id} style={styles.listCard}>
-                  <Image source={item.image} style={styles.listImage} resizeMode="cover" />
-                  <View style={styles.listInfo}>
-                    <Text style={styles.listTitle}>{item.title}</Text>
-                    <Text style={styles.listSub}>당첨일 {item.wonDate}</Text>
+                <View key={item.id} style={styles.winCard}>
+                  <View style={styles.winHead}>
+                    <Image source={item.image} style={styles.listImage} resizeMode="cover" />
+                    <View style={styles.listInfo}>
+                      <Text style={styles.listTitle}>{item.title}</Text>
+                      <Text style={styles.listSub}>
+                        당첨일 {item.wonDate}
+                        {item.method ? ` · ${item.method}` : ''}
+                      </Text>
+                    </View>
+                    <View style={[styles.smallBadge, c.wrap]}>
+                      <Text style={[styles.smallBadgeText, c.text]}>{c.label}</Text>
+                    </View>
                   </View>
-                  <View style={[styles.smallBadge, b.wrap]}>
-                    <Text style={[styles.smallBadgeText, b.text]}>{item.status}</Text>
-                  </View>
+
+                  {/* 당첨자가 다음에 무엇을 해야 하는지를 상태마다 한 줄로 말해 준다.
+                      예전에는 배지 하나뿐이라 뭘 기다려야 하는지 알 수 없었다. */}
+                  {item.claim === 'pending' && (
+                    <Text style={styles.winHint}>
+                      수령 준비 중이에요. 준비가 끝나면 알림으로 알려드릴게요.
+                    </Text>
+                  )}
+
+                  {item.claim === 'ready' && (
+                    <>
+                      <TouchableOpacity
+                        style={styles.claimBtn}
+                        onPress={() => claimPrize(item)}
+                        activeOpacity={0.85}
+                        disabled={claiming === item.id}
+                      >
+                        <Ionicons name="gift" size={16} color={colors.white} />
+                        <Text style={styles.claimBtnText}>
+                          {claiming === item.id ? '받는 중…' : '수령하기'}
+                        </Text>
+                      </TouchableOpacity>
+                      <Text style={[styles.winHint, left !== null && left <= 7 && styles.winHintHot]}>
+                        {left === null
+                          ? `수령 기한 ${item.claimDays}일`
+                          : left <= 0
+                            ? '오늘까지 받아주세요'
+                            : `${left}일 남았어요 · 기한이 지나면 소멸돼요`}
+                      </Text>
+                    </>
+                  )}
+
+                  {item.claim === 'claimed' && (
+                    <Text style={styles.winHint}>
+                      {item.claimedAt
+                        ? `${new Date(item.claimedAt).toLocaleDateString('ko-KR')} 수령 완료`
+                        : '수령 완료'}
+                      {' · '}
+                      <Text style={styles.winLink} onPress={() => claimPrize(item)}>
+                        번호 다시 보기
+                      </Text>
+                    </Text>
+                  )}
+
+                  {item.claim === 'expired' && (
+                    <Text style={styles.winHint}>
+                      수령 기한 {item.claimDays}일이 지나 소멸됐어요.
+                    </Text>
+                  )}
                 </View>
               );
             })}
@@ -760,6 +875,57 @@ export default function MyScreen({ initialTab = 'reviews' }: MyScreenProps) {
       />
 
       {/* ── post "…" menu ── */}
+      {/* ── 경품 일련번호 ──
+          목록에는 번호가 없다. 여기 뜬 값은 '수령하기' 응답으로 받은 것이고,
+          닫으면 화면에서 사라진다. 다시 보려면 서버에 또 물어야 한다. */}
+      <Modal
+        visible={!!claimed}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setClaimed(null)}
+      >
+        <TouchableOpacity
+          style={styles.sheetBackdrop}
+          activeOpacity={1}
+          onPress={() => setClaimed(null)}
+        >
+          <TouchableOpacity style={styles.serialCard} activeOpacity={1}>
+            <Text style={styles.serialEmoji}>🎁</Text>
+            <Text style={styles.serialTitle}>{claimed?.title}</Text>
+            <Text style={styles.serialLabel}>상품권 번호</Text>
+            <View style={styles.serialBox}>
+              <Text style={styles.serialValue} selectable>
+                {claimed?.serial || '-'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.serialCopy}
+              activeOpacity={0.85}
+              onPress={() => {
+                const v = claimed?.serial || '';
+                if (v && typeof navigator !== 'undefined' && navigator.clipboard) {
+                  navigator.clipboard.writeText(v).catch(() => {});
+                }
+              }}
+            >
+              <Ionicons name="copy-outline" size={15} color={colors.primary} />
+              <Text style={styles.serialCopyText}>번호 복사</Text>
+            </TouchableOpacity>
+            <Text style={styles.serialNote}>
+              번호는 마이 &gt; 당첨 탭에서 다시 확인할 수 있어요.{'\n'}
+              타인에게 알려주면 먼저 사용될 수 있으니 주의해 주세요.
+            </Text>
+            <TouchableOpacity
+              style={styles.serialClose}
+              onPress={() => setClaimed(null)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.serialCloseText}>확인</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       <Modal visible={postMenu} transparent animationType="fade" onRequestClose={closePostMenu}>
         <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={closePostMenu}>
           <TouchableOpacity style={styles.sheet} activeOpacity={1}>
@@ -1261,6 +1427,117 @@ const styles = StyleSheet.create({
   badgeShippingText: { color: '#B4770E' },
   badgeDone: { backgroundColor: colors.surfaceAlt },
   badgeDoneText: { color: colors.textSecondary },
+  badgeExpired: { backgroundColor: colors.surfaceAlt },
+  badgeExpiredText: { color: colors.textTertiary },
+
+  /* ---- 당첨 · 수령 ---- */
+  winCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    ...shadow.soft,
+  },
+  winHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  winHint: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.textTertiary,
+    marginTop: spacing.sm,
+  },
+  winHintHot: { color: colors.coralDeep, fontWeight: '700' },
+  winLink: { color: colors.primary, fontWeight: '800' },
+  claimBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 44,
+    marginTop: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+  },
+  claimBtnText: { fontSize: 14.5, fontWeight: '800', color: colors.white },
+  claimErrBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: '#FEF3F2',
+  },
+  claimErrText: { flex: 1, fontSize: 12.5, lineHeight: 18, fontWeight: '600', color: '#B42318' },
+
+  serialCard: {
+    width: Math.min(APP_WIDTH - spacing.lg * 2, 360),
+    alignSelf: 'center',
+    marginTop: 'auto',
+    marginBottom: 'auto',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+  },
+  serialEmoji: { fontSize: 40 },
+  serialTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: colors.textPrimary,
+    marginTop: spacing.sm,
+    textAlign: 'center',
+  },
+  serialLabel: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: colors.textTertiary,
+    marginTop: spacing.lg,
+  },
+  serialBox: {
+    width: '100%',
+    marginTop: 6,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  serialValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 1,
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
+  serialCopy: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primarySoft,
+  },
+  serialCopyText: { fontSize: 12.5, fontWeight: '800', color: colors.primary },
+  serialNote: {
+    fontSize: 11.5,
+    lineHeight: 17,
+    color: colors.textTertiary,
+    textAlign: 'center',
+    marginTop: spacing.lg,
+  },
+  serialClose: {
+    width: '100%',
+    height: 46,
+    marginTop: spacing.lg,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceAlt,
+  },
+  serialCloseText: { fontSize: 14.5, fontWeight: '800', color: colors.textSecondary },
 
   /* reservations */
   resConfirm: { backgroundColor: colors.primarySoft },

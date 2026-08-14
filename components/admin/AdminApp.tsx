@@ -31,7 +31,7 @@ const ui = {
   padY: 10,
 } as const;
 
-const BURNING_MONTHLY_FEE = 200000; // 버닝 매장 월 구독료
+const BURNING_MONTHLY_FEE = 100000; // 버닝 매장 월 구독료
 const PRIZE_BUDGET_RATE = 0.5; // 구독 매출의 50%를 경품 구매에
 const PB_PER_BURNING = 10; // 버닝 매장 리뷰 시 지급 PB
 const PB_PER_REGULAR = 1; // 일반 매장 리뷰 시 지급 PB
@@ -3751,6 +3751,16 @@ function ShipmentsSection() {
   };
   const effReviewed = (s: any) => s.reviewed === '작성완료' || autoReviewed(s);
 
+  // 당첨자가 앱에서 받아가려면 일련번호가 있어야 한다(api/_prize.ts). 이 칸이
+  // 비어 있으면 당첨자 화면은 계속 '준비 중' 이고, 아무도 그걸 모른 채 며칠이
+  // 지나간다. 그래서 '내가 지금 뭘 안 했는지' 를 목록 맨 위에서 알려준다.
+  const blocked = (s: any) =>
+    !s.claimedAt &&
+    s.status !== '완료' &&
+    s.status !== '만료' &&
+    String(s.method || '').includes('상품권') &&
+    !String(s.serial || '').trim();
+
   const eligibleCount = (p: any) => Object.keys(entryCountsFor(entries, p.id)).length;
   // 추첨 대기 = 진행중(마감/추첨 전) 상품 — 상품에서 직접 도출(항상 최신).
   const pending = products.filter((p) => !p.drawnAt && (p.winnersList || []).length === 0 && p.status !== 'ended');
@@ -3807,6 +3817,22 @@ function ShipmentsSection() {
         <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.xl }} />
       ) : (
         <>
+          {deliveries.filter(blocked).length > 0 && (
+            <View style={styles.shipAlert}>
+              <Ionicons name="alert-circle" size={18} color={colors.coralDeep} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.shipAlertTitle}>
+                  일련번호 미입력 {deliveries.filter(blocked).length}건 — 당첨자가 못 받고 있어요
+                </Text>
+                <Text style={styles.shipAlertBody}>
+                  아래 목록에서 해당 건을 눌러 일련번호를 넣어주세요. 저장하면 10분 안에
+                  당첨자에게 알림이 가고 앱에서 바로 수령할 수 있게 돼요. 그때부터 수령
+                  기한 30일이 시작됩니다.
+                </Text>
+              </View>
+            </View>
+          )}
+
           <Text style={styles.h2}>추첨 대기 · {pending.length}</Text>
           {pending.length === 0 ? (
             <Empty text="추첨 대기 상품이 없어요." />
@@ -3870,6 +3896,22 @@ function ShipmentsSection() {
                         {s.tracking ? ` · 송장 ${s.tracking}` : s.serial ? ` · ${s.serial}` : ''}
                       </Text>
                       <View style={styles.prodMetaRow}>
+                        {blocked(s) && (
+                          <View style={[styles.prodPill, { backgroundColor: colors.coralSoft }]}>
+                            <Ionicons name="alert-circle" size={12} color={colors.coralDeep} />
+                            <Text style={[styles.prodPillText, { color: colors.coralDeep }]}>
+                              일련번호 필요
+                            </Text>
+                          </View>
+                        )}
+                        {!!s.claimedAt && (
+                          <View style={[styles.prodPill, { backgroundColor: colors.primarySoft }]}>
+                            <Ionicons name="gift" size={12} color={colors.primary} />
+                            <Text style={styles.prodPillText}>
+                              {new Date(Number(s.claimedAt)).toLocaleDateString('ko-KR')} 수령
+                            </Text>
+                          </View>
+                        )}
                         <View style={[styles.prodPill, reviewed ? { backgroundColor: colors.primarySoft } : { backgroundColor: colors.coralSoft }]}>
                           <Ionicons name={reviewed ? 'checkmark-circle' : 'ellipse-outline'} size={12} color={reviewed ? colors.primary : colors.coral} />
                           <Text style={[styles.prodPillText, !reviewed && { color: colors.coral }]}>
@@ -3945,7 +3987,40 @@ function ShipmentModal({
         </>
       )}
 
+      {/* 수령 진행 상황 — 당첨자가 실제로 받아갔는지는 여기서만 알 수 있다. */}
+      {f.id ? (
+        <View style={styles.card}>
+          <View style={styles.pbRow}>
+            <Text style={styles.pbLabel}>수령 가능 시각</Text>
+            <Text style={styles.pbVal}>
+              {f.readyAt ? new Date(Number(f.readyAt)).toLocaleString('ko-KR') : '아직 (일련번호 대기)'}
+            </Text>
+          </View>
+          <View style={styles.pbRow}>
+            <Text style={styles.pbLabel}>수령 기한</Text>
+            <Text style={styles.pbVal}>
+              {f.readyAt
+                ? new Date(Number(f.readyAt) + 30 * 24 * 3600 * 1000).toLocaleDateString('ko-KR') + ' 까지'
+                : '-'}
+            </Text>
+          </View>
+          <View style={styles.pbRow}>
+            <Text style={styles.pbLabel}>당첨자 수령</Text>
+            <Text style={styles.pbVal}>
+              {f.claimedAt ? new Date(Number(f.claimedAt)).toLocaleString('ko-KR') + ' 확인' : '미수령'}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+
       <Text style={styles.fLabel}>수령 방식</Text>
+      {!method.includes('상품권') && (
+        <Text style={styles.muted}>
+          ⚠ 앱 안에서 당첨자가 직접 받아가는 흐름은 현재 &apos;상품권(일련번호)&apos; 방식만
+          지원해요. 다른 방식은 당첨자 화면이 계속 &apos;준비 중&apos;으로 남으니, 따로
+          연락해서 전달해 주세요.
+        </Text>
+      )}
       <View style={styles.chipRow}>
         {SHIP_METHODS.map((m) => (
           <TouchableOpacity
@@ -3977,6 +4052,20 @@ function ShipmentModal({
       ) : method === '상품권(일련번호)' ? (
         <>
           <FormField label="일련번호 / 코드" value={String(f.serial ?? '')} onChange={(v) => set('serial', v)} placeholder="예: GIFT-1234-5678" />
+          {/* 이 칸 하나가 당첨자의 수령 흐름 전체를 연다. 비어 있으면 당첨자는
+              앱에서 '준비 중' 만 보고 아무것도 할 수 없다. */}
+          <View style={String(f.serial ?? '').trim() ? styles.shipNoteOk : styles.shipNoteWarn}>
+            <Ionicons
+              name={String(f.serial ?? '').trim() ? 'checkmark-circle' : 'alert-circle'}
+              size={15}
+              color={String(f.serial ?? '').trim() ? colors.primary : colors.coralDeep}
+            />
+            <Text style={styles.shipNoteText}>
+              {String(f.serial ?? '').trim()
+                ? '저장하면 10분 안에 당첨자에게 알림이 가고 앱에서 수령할 수 있어요. 그때부터 수령 기한 30일이 시작됩니다.'
+                : '이 칸이 비어 있으면 당첨자는 앱에서 "준비 중"만 보고 받을 수 없어요. 번호를 넣고 저장해 주세요.'}
+            </Text>
+          </View>
           <FormField label="전달 연락처 (문자/카톡)" value={String(f.contact ?? '')} onChange={(v) => set('contact', v)} />
         </>
       ) : method === '방문 수령' ? (
@@ -6700,6 +6789,46 @@ const styles = StyleSheet.create({
   },
   autoNoteBad: { backgroundColor: colors.coralSoft },
   autoNoteText: { flex: 1, fontSize: 12, fontWeight: '600', color: colors.primary, lineHeight: 17 },
+
+  /* ---- 배송·수여: 당첨자가 막혀 있음을 알리는 자리 ---- */
+  shipAlert: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    backgroundColor: colors.coralSoft,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  shipAlertTitle: { fontSize: 13.5, fontWeight: '800', color: colors.coralDeep },
+  shipAlertBody: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.coralDeep,
+    marginTop: 3,
+    opacity: 0.85,
+  },
+  shipNoteOk: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  shipNoteWarn: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: colors.coralSoft,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  shipNoteText: { flex: 1, fontSize: 12, lineHeight: 18, fontWeight: '600', color: colors.textSecondary },
   errBanner: {
     backgroundColor: colors.coralSoft,
     color: colors.coralDeep,

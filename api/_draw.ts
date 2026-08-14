@@ -159,10 +159,12 @@ export async function runDueDraws(): Promise<DrawResult[]> {
   for (const r of results) {
     const p = products.find((x) => x.id === r.productId);
     for (const w of p?.winnersList || []) {
+      // 수령 준비가 끝나면 _prize.ts 가 따로 '받아가세요' 알림을 보낸다.
+      // 여기서 수령 방법까지 약속하면, 아직 못 받는데 받으라고 하는 셈이 된다.
       await notify(String(w.id), {
         type: 'raffle',
         title: '🎉 경품에 당첨되셨어요!',
-        body: `'${r.name}' 에 당첨되셨습니다. 마이 > 당첨 탭에서 확인해 주세요.`,
+        body: `'${r.name}' 에 당첨되셨습니다. 마이 > 당첨 탭에서 확인해 주세요. 수령 준비가 끝나면 다시 알려드릴게요.`,
       });
     }
   }

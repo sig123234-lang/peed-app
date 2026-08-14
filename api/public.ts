@@ -5,6 +5,7 @@ import { resolveStore } from './_match';
 import * as notifs from './_notifs';
 import * as push from './_push';
 import { recordPbEvent } from './_pb';
+import { CLAIM_DAYS, claimPrize, claimState, expiresAt } from './_prize';
 import * as lk from './_livekit';
 import * as reservations from './_reservations';
 import * as passport from './_passport';
@@ -79,7 +80,7 @@ async function handleApply(b: any, res: any) {
     ownerName: String(b?.applicant || '').trim(),
     salesRep: '',
     stage: '리드',
-    monthlyFee: 200000,
+    monthlyFee: 100000,
     paymentStatus: '미결제',
     source: '앱신청',
     nextAction: '첫 컨택',
@@ -180,14 +181,21 @@ async function handleMyWins(uid: string, res: any) {
           (!!me && !!s.winnerName && s.winnerName === me.name) ||
           (!!me && !!s.contact && s.contact === me.handle))
     );
+    // 일련번호(serial)는 절대 목록에 싣지 않는다. 본인이 '수령하기' 를 누를 때만
+    // claimPrize 가 한 번 내려준다 — 목록에 실으면 화면을 열어 둔 것만으로
+    // 번호가 캐시·로그·스크린샷에 남는다.
     items.push({
       id: p.id,
       title: p.name || '경품',
       image: p.image || '',
       wonDate: won.date || p.drawnAt || '',
       status: shipStatusToApp(String(ship?.status || '')),
-      method: ship?.method || '',
+      method: ship?.method || p.method || '',
       tracking: ship?.tracking || '',
+      claim: claimState(ship),
+      expiresAt: ship ? expiresAt(ship) : null,
+      claimedAt: Number(ship?.claimedAt) || null,
+      claimDays: CLAIM_DAYS,
     });
   }
   items.sort((a, b) => String(b.wonDate).localeCompare(String(a.wonDate)));
@@ -1514,6 +1522,12 @@ export default async function handler(req: any, res: any) {
     if (action === 'notifsRead') return await handleNotifsRead(uid, res);
     if (action === 'apply') return await handleApply(b, res);
     if (action === 'invite') return await handleInvite(b, res);
+    // 경품 수령 — 로그인한 본인의 당첨 건에 한해 일련번호를 한 번 내려준다.
+    if (action === 'claimPrize') {
+      const r = await claimPrize(uid, String(b?.productId || ''));
+      res.status(r.ok ? 200 : 400).json(r);
+      return;
+    }
     res.status(400).json({ ok: false, error: 'bad_action' });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: 'failed', detail: String(e?.message || e) });

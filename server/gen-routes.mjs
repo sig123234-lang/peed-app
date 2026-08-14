@@ -39,6 +39,7 @@ ${table}
 
 // 스케줄러가 쓰는 작업 — 라우트가 아니라 서버가 주기적으로 직접 부른다.
 export { runDueDraws } from '../api/_draw';
+export { runPrizeUpkeep } from '../api/_prize';
 `;
 
 fs.writeFileSync(path.join(import.meta.dirname, 'routes.entry.ts'), src);
