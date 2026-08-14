@@ -1,4 +1,4 @@
-import type { ReceiptVerdict, ShotMeta } from './_receipt';
+import { RECEIPT_MAX_AGE_DAYS, type ReceiptVerdict, type ShotMeta } from './_receipt';
 import { getJSON, putJSON } from './_store';
 
 // 리뷰 인증 — 자체 검열 시스템.
@@ -57,6 +57,38 @@ async function readShots(): Promise<ShotPrint[]> {
 export type DupKind = 'receipt' | 'image' | 'text';
 
 /**
+ * 두 영수증 키가 같은 종이를 가리키는가.
+ *
+ * 완전히 같으면 당연히 같다. 문제는 다시 찍으면 판독이 한 글자쯤 어긋난다는 것이다.
+ * 실측(2026-08-14)에서 같은 영수증의 승인번호가 `56207962` 와 `36207962` 로 읽혀
+ * 재제출이 그대로 통과했다. 사업자등록번호는 체크섬이 있어 스스로 고쳐지지만
+ * 승인번호에는 그런 장치가 없다.
+ *
+ * 그래서 승인번호는 한 글자 어긋남까지 같은 것으로 본다. 다만 **맨 끝자리는 예외**다 —
+ * 같은 단말에서 이어서 결제하면 승인번호가 끝자리만 다르게 나온다. 그걸 봐주면 옆
+ * 테이블 손님의 영수증까지 '이미 쓴 영수증' 이 되어 멀쩡한 회원이 막힌다.
+ * 매장(사업자번호·전화)이 다르면 애초에 비교하지 않는다.
+ */
+export function sameReceiptKey(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+
+  const ma = a.match(/^(\d+)_ap(\d+)$/);
+  const mb = b.match(/^(\d+)_ap(\d+)$/);
+  if (!ma || !mb || ma[1] !== mb[1]) return false;
+
+  const [x, y] = [ma[2], mb[2]];
+  if (x.length !== y.length) return false;
+  let at = -1;
+  for (let i = 0; i < x.length; i++) {
+    if (x[i] === y[i]) continue;
+    if (at >= 0) return false;   // 두 글자 이상 다르면 다른 거래다
+    at = i;
+  }
+  return at >= 0 && at !== x.length - 1;
+}
+
+/**
  * 이미 제출된 적 있는 영수증·사진인지 본다.
  *
  * 찾는 순서가 곧 증거의 세기다. 영수증 고유키는 다시 찍든 잘라내든 그대로라
@@ -73,7 +105,7 @@ export async function findDuplicateShot(print: {
   const list = await readShots();
 
   if (receiptKey) {
-    const hit = list.find((s) => s.receiptKey && s.receiptKey === receiptKey);
+    const hit = list.find((s) => sameReceiptKey(s.receiptKey, receiptKey));
     if (hit) return { hit, kind: 'receipt' };
   }
   if (byteHash) {
@@ -210,6 +242,37 @@ const FLAGS: Record<string, { label: string; weight: number }> = {
 const FAMILIES: string[][] = [
   ['shot_missing', 'not_receipt', 'ocr_unreadable', 'receipt_undated'],
 ];
+
+/**
+ * 적립을 막아야 하는 신호 — 있으면 그 문구를, 없으면 빈 문자열.
+ *
+ * 이 서비스의 기본 정책은 '지급하되 플래그' 다. 판독은 자주 틀리고, 애매한 것을 막으면
+ * 부정한 사람보다 멀쩡한 회원이 먼저 다치기 때문이다. 다만 그 정책이 성립하려면 신호가
+ * **애매해야** 한다. 여기 모은 둘은 애매하지 않다.
+ *
+ *   · 같은 영수증 재제출 — 사업자번호+승인번호가 같은 '같은 거래' 다. 판독이 반쯤
+ *     무너져도 키가 섰다는 건 같은 종이라는 뜻이다. '영수증 한 장에 인증 한 번' 은
+ *     이 방식의 전제라, 경고만 하고 그대로 받아주면 영수증을 증거로 쓰는 의미가 없다.
+ *   · 14일이 지난 영수증 — 영수증에 찍힌 결제일시를 **읽어낸** 경우만이다. 날짜를 못
+ *     읽어 촬영 시각으로 추정한 건은 막지 않는다. 우리가 정한 기한을 어겼다고 알려
+ *     주면서 그대로 받아주면 그건 기한이 아니다.
+ *
+ * 나머지(영수증으로 안 보임·매장 불일치·촬영 정보 없음)는 여전히 막지 않는다. 전부
+ * 판독이 틀렸을 수 있는 것들이고, 그건 위험 점수로 어드민에게 넘긴다.
+ */
+export function blockReason(codes: string[], receiptDated: boolean): string {
+  const has = (c: string) => codes.includes(c);
+  if (has('dup_receipt')) {
+    return '이미 인증에 사용된 영수증이에요. 영수증 한 장은 한 번만 인증할 수 있어요.';
+  }
+  if (has('dup_image')) {
+    return '이미 제출된 사진이에요. 다른 영수증으로 인증해 주세요.';
+  }
+  if (has('receipt_stale') && receiptDated) {
+    return `결제일로부터 ${RECEIPT_MAX_AGE_DAYS}일이 지난 영수증이에요. 최근 방문 영수증으로 인증해 주세요.`;
+  }
+  return '';
+}
 
 export type RiskResult = {
   score: number;

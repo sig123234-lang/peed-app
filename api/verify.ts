@@ -6,6 +6,7 @@ import {
   readTextBestOf,
   type CropBox,
   type ExifInfo,
+  type ReadPass,
 } from './_ocr';
 import {
   RECEIPT_MAX_AGE_DAYS,
@@ -16,6 +17,7 @@ import {
 import { readUid, readUserCookie } from './_session';
 import { saveDataUrl } from './_store';
 import {
+  blockReason,
   findDuplicateShot,
   saveScan,
   textFingerprint,
@@ -40,8 +42,11 @@ import {
 // 판독 결과는 scanId 로 서버에 잠깐 보관한다. /api/review 가 그 id 로 결과를
 // 이어받으므로 같은 사진을 두 번 올리지 않고, OCR 도 한 번만 돈다.
 //
-// 무엇도 차단하지 않는다 — 정책은 '지급하되 플래그' 다. 여기서 나오는 warnings 는
-// 유저가 스스로 고칠 기회일 뿐이고, 판정은 /api/review 가 위험 점수로 남긴다.
+// 기본은 '지급하되 플래그' 라 대부분의 신호는 warnings 로만 알려 주고 막지 않는다.
+// 예외는 둘뿐이다 — 같은 영수증 재제출과 기한이 지난 영수증(_verify.blockReason).
+// 그 둘은 blocked 로 내려 화면이 리뷰를 쓰기 **전에** 막게 한다. 다 쓰고 나서 제출
+// 단계에서 막으면 쓴 글이 통째로 헛수고가 되기 때문이다. 판정 자체는 /api/review 가
+// 다시 하므로, 화면이 이 값을 무시하더라도 지급되지는 않는다.
 
 /**
  * 촬영 정보. 서버가 업로드된 바이트에서 직접 읽는 것이 원칙이다.
@@ -110,29 +115,19 @@ async function handleScan(uid: string, body: any, res: any) {
   // 각도를 돌려가며 읽는 이유는 _ocr.readTextBestOf 에 적어 뒀다. 점수는 판독 결과의
   // 신뢰도(사업자번호 체크섬·전화·일시…)를 그대로 쓴다 — 영수증에는 정답지가 있어서
   // "방향이 맞았나" 를 추측이 아니라 계산으로 고를 수 있다.
-  // 어떤 조건으로 몇 번 읽어 볼지는 '잘라 왔는가' 로 갈린다.
-  //
-  //   · 잘라 온 경우 — 한 판이 4~5초라 여유가 있다. 줄인 판과 안 줄인 판을 둘 다
-  //     돌려 점수로 고른다. 영수증이 프레임을 꽉 채웠으면 안 줄인 쪽이, 배경이 남았으면
-  //     줄인 쪽이 이긴다(둘 다 실측으로 확인된 갈림이라 서버가 미리 못 정한다).
-  //   · 통째로 온 경우 — 한 판이 20초를 넘어 여러 번 돌릴 수 없다. 줄이는 쪽이 확실히
-  //     낫다는 것이 이미 측정돼 있으므로 그것만 쓴다.
-  //
-  // 눕혀 찍은 영수증을 구제하는 회전 재시도는 맨 뒤에 둔다 — 드문 경우가 흔한 경우를
-  // 느리게 만들면 안 된다.
+  // 줄여서 읽을지 말지는 '영수증이 프레임을 얼마나 채우는가' 로 갈리는데 서버는 그걸
+  // 모른다. 그래서 화소 수로 짐작하고(auto), 시원찮으면 반대쪽(flip)도 대 본 뒤
+  // 점수로 고른다. 자세한 실측은 _ocr.resizeTarget 위 주석에 적어 뒀다.
   const crop = readCrop(body?.crop);
-  const passes = crop
-    ? [
-        { rotate: 0, shrink: false },
-        { rotate: 0, shrink: true },
-        { rotate: 90, shrink: true },
-        { rotate: 270, shrink: true },
-      ]
-    : [
-        { rotate: 0, shrink: true },
-        { rotate: 90, shrink: true },
-        { rotate: 270, shrink: true },
-      ];
+  const passes: ReadPass[] = [
+    // 크기로 짐작한 쪽을 먼저. 대부분 여기서 끝난다.
+    { rotate: 0, shrink: 'auto' },
+    // 짐작이 틀렸을 수 있으니 반대쪽도 대 본다.
+    { rotate: 0, shrink: 'flip' },
+    // 눕혀 찍은 영수증 구제 — 드문 경우라 맨 뒤에 둔다.
+    { rotate: 90, shrink: 'auto' },
+    { rotate: 270, shrink: 'auto' },
+  ];
 
   // 어느 판을 고를지는 판독 신뢰도로 재되, **주소에 가산점을 준다.**
   // 신뢰도는 사업자등록번호에 0.40 을 주고 주소에는 0.06 만 주는데, 그 배점은 영수증으로
@@ -186,22 +181,24 @@ async function handleScan(uid: string, body: any, res: any) {
 
   await saveScan(rec);
 
-  // 유저에게 보여줄 주의 문구 — 적립을 막지는 않는다(정책: 지급하되 플래그).
+  // 이 영수증으로는 인증할 수 없는 경우 — 이유를 여기서 미리 알려 준다.
+  // 리뷰를 다 쓰고 나서 제출 단계에서 막으면 쓴 글이 통째로 헛수고가 된다.
+  // (판정 자체는 /api/review 가 다시 한다 — 화면의 안내를 믿고 지급할 수는 없다.)
+  const dupCodes: string[] = [];
+  if (dup) dupCodes.push(dup.kind === 'receipt' ? 'dup_receipt' : dup.kind === 'image' ? 'dup_image' : 'dup_text');
+  const blocked = blockReason([...verdict.flags, ...dupCodes], verdict.at > 0);
+
+  // 그 밖의 주의 문구 — 적립을 막지는 않는다(정책: 지급하되 플래그).
   const warnings: string[] = [];
   if (!verdict.isReceipt) {
     // 실측에서 판독을 살리고 죽인 것은 화질이 아니라 '영수증이 화면에서 차지하는 비율'
     // 이었다. 배경(책상·손)이 넓게 들어갈수록 나빠진다. 그래서 조명이 아니라 구도를 말한다.
     warnings.push('영수증이 화면에 꽉 차게, 반듯하게 다시 찍어 주세요.');
   }
-  if (dup) {
-    warnings.push(
-      dup.kind === 'receipt'
-        ? '이미 인증에 사용된 영수증이에요.'
-        : '예전에 제출된 적 있는 사진이에요.'
-    );
-  }
-  if (verdict.flags.includes('receipt_stale')) {
-    warnings.push(`${RECEIPT_MAX_AGE_DAYS}일이 지난 영수증이에요. 최근 방문 영수증으로 인증해 주세요.`);
+  // 막힌 사유는 warnings 에 또 넣지 않는다 — 화면에서 따로, 더 크게 보여 준다.
+  if (dup && !blocked) warnings.push('예전에 제출된 적 있는 사진이에요.');
+  if (verdict.flags.includes('receipt_stale') && !blocked) {
+    warnings.push(`${RECEIPT_MAX_AGE_DAYS}일이 지난 영수증으로 보여요. 최근 방문 영수증이 더 확실해요.`);
   }
   if (verdict.flags.includes('receipt_future')) {
     warnings.push('결제 시각이 미래로 읽혔어요. 다른 사진은 아닌지 확인해 주세요.');
@@ -215,7 +212,10 @@ async function handleScan(uid: string, body: any, res: any) {
 
   res.status(200).json({
     ok: true,
+    // 막힌 경우에도 scanId 는 준다. 화면이 '무엇 때문에 막혔는지' 를 이 판독 결과와
+    // 함께 보여 줘야 하고, 어차피 제출은 서버가 다시 막는다.
     scanId: rec.id,
+    blocked,
     // "이 영수증이 맞나" 를 화면에서 눈으로 확인시켜 주는 값들.
     // 매장명·별점·본문은 여기서 채우지 않는다 — 매장은 회원이 골라 확정하고,
     // 별점과 리뷰는 PEED 안에서 직접 쓴다. 그게 이 방식의 요지다.

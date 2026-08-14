@@ -5,6 +5,7 @@ import { readUid, readUserCookie } from './_session';
 import { deleteKey, getJSON, putJSON, storeConfigured } from './_store';
 import {
   behaviourFlags,
+  blockReason,
   dropScan,
   rememberShot,
   scoreRisk,
@@ -88,6 +89,18 @@ export default async function handler(req: any, res: any) {
       else if (scan.dupKind === 'image') flagCodes.push('dup_image');
       else if (scan.dupKind === 'text') {
         flagCodes.push(scan.dupOf === uid ? 'dup_text' : 'dup_image');
+      }
+    }
+
+    // ── 받을 수 없는 영수증이면 여기서 끝낸다 ──
+    // 화면에서도 판독 직후에 미리 막지만, 지급 여부를 화면의 안내에 맡길 수는 없다.
+    // 리뷰를 저장하지도, PB 를 주지도 않는다 — 이 둘만은 '지급하되 플래그' 의 예외다
+    // (이유는 _verify.blockReason 주석).
+    if (scan) {
+      const blocked = blockReason(flagCodes, scan.receipt.at > 0);
+      if (blocked) {
+        res.status(200).json({ ok: false, error: 'receipt_blocked', reason: blocked });
+        return;
       }
     }
 

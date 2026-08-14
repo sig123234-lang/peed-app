@@ -423,7 +423,7 @@ export async function readText(image: ImageBytes, opts: ReadOpts = {}): Promise<
 }
 
 /** 한 번의 판독 시도 — 어떤 각도로, 줄여서 볼지 말지. */
-export type ReadPass = { rotate: number; shrink: boolean };
+export type ReadPass = { rotate: number; shrink: boolean | 'auto' | 'flip' };
 
 /**
  * 여러 조건으로 읽어 보고, 호출한 쪽이 매긴 점수가 가장 높은 결과를 준다.

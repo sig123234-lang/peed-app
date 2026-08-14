@@ -242,6 +242,8 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
   const [scanDone, setScanDone] = useState(false);
   const [scanErr, setScanErr] = useState('');
   const [warnings, setWarnings] = useState<string[]>([]);
+  // 이 영수증으로는 인증할 수 없는 사유. 비어 있지 않으면 제출을 막는다.
+  const [blocked, setBlocked] = useState('');
   // 영수증에서 읽은 결제 사실 — "이 영수증이 맞나"를 유저가 눈으로 확인하는 자리.
   const [receipt, setReceipt] = useState<{ at: number; total: number } | null>(null);
 
@@ -375,6 +377,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
     // 예전 scanId 가 그대로 남아, 지금 리뷰에 **전에 올린 사진**이 증거로 붙는다.
     setReceipt(null);
     setScanId('');
+    setBlocked('');
     try {
       const r = await fetch('/api/verify?action=scan', {
         method: 'POST',
@@ -396,6 +399,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
       }
       setScanId(String(d.scanId || ''));
       setWarnings(Array.isArray(d.warnings) ? d.warnings : []);
+      setBlocked(String(d.blocked || ''));
 
       // 영수증이 답하는 건 '언제 얼마를 썼나' 까지다. 매장은 위에서 직접 고르고,
       // 별점·리뷰는 여기서 쓴다 — 영수증에 없는 값이라 채울 것도 없다.
@@ -535,6 +539,12 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
   };
 
   const handleSubmit = async () => {
+    // 받을 수 없는 영수증이면 여기서 멈춘다. 서버도 같은 판정을 다시 하지만, 먼저
+    // 막아야 "적립됐다" 는 화면을 보여 줬다가 되돌리는 일이 없다.
+    if (blocked) {
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+      return;
+    }
     if (!isFormValid) {
       setAttempted(true);
       goToField(missing[0].key);
@@ -592,6 +602,16 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
     })
       .then((r) => r.json())
       .then((d) => {
+        // 서버가 영수증을 거절했다 — 화면에서 미리 막지 못한 경우(창을 두 개 띄워
+        // 같은 영수증을 동시에 낸 경우 등)다. 미리 더해 둔 PB 를 되돌리고 폼으로
+        // 돌아가 이유를 보여 준다. 글도 만들지 않는다.
+        if (d?.ok === false && d.error === 'receipt_blocked') {
+          earn(-reward);
+          setBlocked(String(d.reason || '이 영수증으로는 인증할 수 없어요.'));
+          setStage('form');
+          scrollRef.current?.scrollTo({ y: 0, animated: true });
+          return;
+        }
         if (d && typeof d.balance === 'number') setBalance(d.balance);
         if (typeof d?.award === 'number' && d.award > 0) setEarnedPb(d.award);
         if (typeof d?.burning === 'boolean') setAwardedBurning(d.burning);
@@ -958,7 +978,13 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
 
               {scanning && <Notice tone="info" busy text="영수증을 읽고 있어요…" />}
 
-              {!scanning && scanDone && !scanErr && (
+              {/* 막힌 사유는 맨 위에, 단독으로. 다른 안내와 섞이면 "그래도 되나 보다"
+                  하고 리뷰를 다 쓴 뒤에야 막히는 일이 생긴다. */}
+              {!scanning && !!blocked && (
+                <Notice tone="warn" icon="close-circle" text={blocked} />
+              )}
+
+              {!scanning && scanDone && !scanErr && !blocked && (
                 <Notice
                   tone="ok"
                   icon="checkmark-circle"
@@ -1339,10 +1365,16 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
                 style={{ flex: 1 }}
               />
               <AppButton
-                label={isFormValid ? `작성 완료 · +${rewardPb}PB` : '작성 완료'}
+                label={
+                  blocked
+                    ? '다른 영수증이 필요해요'
+                    : isFormValid
+                      ? `작성 완료 · +${rewardPb}PB`
+                      : '작성 완료'
+                }
                 variant="gradient"
                 onPress={handleSubmit}
-                style={[{ flex: 1.8 }, !isFormValid && styles.ctaDim]}
+                style={[{ flex: 1.8 }, (!isFormValid || !!blocked) && styles.ctaDim]}
               />
             </View>
 
