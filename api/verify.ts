@@ -4,6 +4,7 @@ import {
   ocrAvailable,
   readExif,
   readTextBestOf,
+  type CropBox,
   type ExifInfo,
 } from './_ocr';
 import {
@@ -67,6 +68,24 @@ function mergeExif(server: ExifInfo, client: any, now: number): ShotMeta {
   return { shotAt: sane ? shotAt : 0, hasGps, stripped: false };
 }
 
+/**
+ * 촬영 화면의 가이드 프레임이 보내오는 사각형(0..1). 이상한 값은 그냥 버린다 —
+ * 자르기는 판독을 돕자고 하는 일이라, 값이 미심쩍으면 통째로 읽는 편이 낫다.
+ * 너무 작은 영역(한 변 20% 미만)도 받지 않는다. 잘못 잡으면 글자가 통째로 날아간다.
+ */
+function readCrop(raw: any): CropBox | undefined {
+  const x = Number(raw?.x);
+  const y = Number(raw?.y);
+  const w = Number(raw?.w);
+  const h = Number(raw?.h);
+  if (![x, y, w, h].every((v) => Number.isFinite(v))) return undefined;
+  if (w < 0.2 || h < 0.2 || w > 1 || h > 1) return undefined;
+  if (x < 0 || y < 0 || x + w > 1.001 || y + h > 1.001) return undefined;
+  // 전체를 다 고른 것과 같으면 자를 이유가 없다.
+  if (w > 0.99 && h > 0.99) return undefined;
+  return { x, y, w, h };
+}
+
 async function handleScan(uid: string, body: any, res: any) {
   if (!uid) {
     res.status(200).json({ ok: false, error: 'login_required' });
@@ -91,14 +110,48 @@ async function handleScan(uid: string, body: any, res: any) {
   // 각도를 돌려가며 읽는 이유는 _ocr.readTextBestOf 에 적어 뒀다. 점수는 판독 결과의
   // 신뢰도(사업자번호 체크섬·전화·일시…)를 그대로 쓴다 — 영수증에는 정답지가 있어서
   // "방향이 맞았나" 를 추측이 아니라 계산으로 고를 수 있다.
-  // enough 0.35 는 "영수증인지 판정하기엔 충분한" 지점이다. 실측(2026-08-14)에서 폰 원본
-  // 두 장이 첫 판(0도)에 0.76 / 0.40 을 냈는데, 문턱이 0.5 였을 때는 0.40 짜리가 남은
-  // 각도를 다 돌리느라 83초가 걸렸다 — 이미 사업자번호 체크섬까지 통과한 판을 들고서.
-  // 눕혀 찍은 영수증을 구제하는 회전 재시도는 그대로 두되, 이미 읽힌 건 더 뒤지지 않는다.
+  // 어떤 조건으로 몇 번 읽어 볼지는 '잘라 왔는가' 로 갈린다.
+  //
+  //   · 잘라 온 경우 — 한 판이 4~5초라 여유가 있다. 줄인 판과 안 줄인 판을 둘 다
+  //     돌려 점수로 고른다. 영수증이 프레임을 꽉 채웠으면 안 줄인 쪽이, 배경이 남았으면
+  //     줄인 쪽이 이긴다(둘 다 실측으로 확인된 갈림이라 서버가 미리 못 정한다).
+  //   · 통째로 온 경우 — 한 판이 20초를 넘어 여러 번 돌릴 수 없다. 줄이는 쪽이 확실히
+  //     낫다는 것이 이미 측정돼 있으므로 그것만 쓴다.
+  //
+  // 눕혀 찍은 영수증을 구제하는 회전 재시도는 맨 뒤에 둔다 — 드문 경우가 흔한 경우를
+  // 느리게 만들면 안 된다.
+  const crop = readCrop(body?.crop);
+  const passes = crop
+    ? [
+        { rotate: 0, shrink: false },
+        { rotate: 0, shrink: true },
+        { rotate: 90, shrink: true },
+        { rotate: 270, shrink: true },
+      ]
+    : [
+        { rotate: 0, shrink: true },
+        { rotate: 90, shrink: true },
+        { rotate: 270, shrink: true },
+      ];
+
+  // 어느 판을 고를지는 판독 신뢰도로 재되, **주소에 가산점을 준다.**
+  // 신뢰도는 사업자등록번호에 0.40 을 주고 주소에는 0.06 만 주는데, 그 배점은 영수증으로
+  // 매장을 알아내던 시절의 것이다. 지금 매장은 회원이 골라 확정하고 영수증 주소는
+  // '그 매장이 맞는지' 를 가리는 유일한 근거라, 고를 때만큼은 훨씬 무겁게 쳐야 한다.
+  const pick = (t: string) => {
+    const p = parseReceipt(t, now);
+    return p.confidence + (p.address ? 0.15 : 0);
+  };
+
+  // 문턱은 한 판이 얼마나 비싼지에 맞춘다. 잘라 온 판은 4~5초라 주소를 건질 때까지
+  // 더 뒤져도 되고, 통째로 온 판은 20초가 넘어 '영수증인 건 알겠다' 싶으면 멈춰야 한다.
+  // (문턱을 높게 뒀다가 이미 충분히 읽힌 판을 들고 80초를 쓴 적이 있다.)
   const [best, exif] = await Promise.all([
-    readTextBestOf(image, (t) => parseReceipt(t, now).confidence, {
-      enough: 0.35,
-      budgetMs: 55000,
+    readTextBestOf(image, pick, {
+      enough: crop ? 0.45 : 0.25,
+      budgetMs: 40000,
+      crop,
+      passes,
     }),
     readExif(image),
   ]);

@@ -18,6 +18,7 @@ import {
   type LayoutChangeEvent,
 } from 'react-native';
 
+import { ReceiptCropper, type CropBox } from '@/components/review/ReceiptCropper';
 import { BlurBackdrop } from '@/components/ui/BlurBackdrop';
 import { AppButton } from '@/components/ui/kit';
 import { useFeed } from '@/context/feed';
@@ -230,6 +231,12 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
 
   // 영수증 판독
   const [shotImage, setShotImage] = useState<string | null>(null);
+  // 방금 고른 사진 — 영역을 잡는 동안 여기 들고 있다가, 확정되면 판독으로 넘긴다.
+  const [pending, setPending] = useState<{
+    uri: string;
+    dataUrl: string;
+    exif: ShotExif | null;
+  } | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanId, setScanId] = useState('');
   const [scanDone, setScanDone] = useState(false);
@@ -334,12 +341,24 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
     }
 
     const asset = result.assets[0];
-    setShotImage(asset.uri);
     const dataUrl = asset.base64
       ? `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}`
       : await uriToDataUrl(asset.uri);
-    if (dataUrl) scanShot(dataUrl, readAssetExif(asset.exif));
-    else setScanErr('사진을 읽지 못했어요. 아래에 직접 입력해 주세요.');
+    if (!dataUrl) {
+      setShotImage(asset.uri);
+      setScanErr('사진을 읽지 못했어요. 아래에 직접 입력해 주세요.');
+      return;
+    }
+    // 바로 읽지 않고 영역부터 잡게 한다. 영수증이 프레임을 채울수록 판독이 좋아지는데,
+    // 그 차이가 '주소를 읽느냐' 를 가르고 주소는 매장 대조의 유일한 근거다.
+    setPending({ uri: asset.uri, dataUrl, exif: readAssetExif(asset.exif) });
+  };
+
+  const startScan = (crop: CropBox | null) => {
+    if (!pending) return;
+    setShotImage(pending.uri);
+    scanShot(pending.dataUrl, pending.exif, crop);
+    setPending(null);
   };
 
   // 잘못 고른 사진을 뺄 방법이 없어서, 지우려면 화면을 닫고 처음부터 다시
@@ -348,7 +367,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
     setPhotos((prev) => prev.filter((_, i) => i !== idx));
 
   /** 영수증을 서버로 보내 판독한다. 실패해도 손으로 입력해서 계속 진행할 수 있다. */
-  const scanShot = async (dataUrl: string, exif: ShotExif | null) => {
+  const scanShot = async (dataUrl: string, exif: ShotExif | null, crop: CropBox | null) => {
     setScanning(true);
     setScanErr('');
     setWarnings([]);
@@ -361,7 +380,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shot: dataUrl, exif }),
+        body: JSON.stringify({ shot: dataUrl, exif, crop }),
       });
       const d = await r.json();
       if (!d?.ok) {
@@ -887,6 +906,13 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
               status={shotStatus}
               statusTone={shotImage && !scanErr && !scanning ? 'lime' : 'brand'}
             >
+              {pending ? (
+                <ReceiptCropper
+                  uri={pending.uri}
+                  onConfirm={(b) => startScan(b)}
+                  onSkip={() => startScan(null)}
+                />
+              ) : (
               <TouchableOpacity
                 style={[styles.shotBox, !!shotImage && styles.shotBoxFilled]}
                 onPress={() => pickImage('shot')}
@@ -928,6 +954,7 @@ export default function ReviewScreen({ onBack }: ReviewScreenProps) {
                   </>
                 )}
               </TouchableOpacity>
+              )}
 
               {scanning && <Notice tone="info" busy text="영수증을 읽고 있어요…" />}
 

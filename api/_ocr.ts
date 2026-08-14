@@ -69,6 +69,15 @@ export async function ocrAvailable(): Promise<boolean> {
 
 export type ImageBytes = { buf: Buffer; ext: string };
 
+/**
+ * 사진에서 영수증만 남길 사각형. 0..1 비율로 받는다.
+ *
+ * 픽셀이 아니라 비율인 이유: 화면에 보이는 사진은 축소돼 있고 기기마다 크기가 달라서,
+ * 픽셀로 주고받으면 어느 쪽 좌표계인지가 늘 헷갈린다. 비율이면 원본 해상도가 얼마든
+ * 같은 뜻이고, 자르기는 서버가 원본에서 직접 한다(줄인 사본에서 자르면 그만큼 잃는다).
+ */
+export type CropBox = { x: number; y: number; w: number; h: number };
+
 /** data URL(base64) → 바이트. 형식이 아니거나 너무 크면 null. */
 export function decodeDataUrl(dataUrl: string): ImageBytes | null {
   const m = String(dataUrl || '').match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
@@ -200,29 +209,63 @@ function run(bin: string, args: string[], timeoutMs: number): Promise<string | n
 }
 
 /**
+ * EXIF 회전까지 반영한 실제 크기. identify 는 회전 전 픽셀을 알려주므로,
+ * 촬영 화면에서 잡은 사각형과 좌표계를 맞추려면 -auto-orient 를 거친 값이어야 한다.
+ */
+async function orientedSize(srcPath: string): Promise<{ w: number; h: number }> {
+  const raw = await run(MAGICK, [`${srcPath}[0]`, '-auto-orient', '-format', '%w %h', 'info:'], 8000);
+  const [w, h] = String(raw || '').trim().split(/\s+/).map(Number);
+  return { w: w || 0, h: h || 0 };
+}
+
+// 줄일지 말지는 크기로 정할 수 없다 — **영수증이 프레임을 얼마나 채우는가** 로 갈린다.
+// 실측(2026-08-14)에서 거의 같은 크기의 두 판이 정반대로 나왔다.
+//   · 영수증만 딱 담긴 1750x2700 → 그대로가 최선. 2400 으로 줄이면(86%) 사업자등록번호
+//     줄이 통째로 사라진다. 감열지의 가는 획은 재샘플링에 극도로 약하다.
+//   · 배경이 남은 1800x2800 → 2400 + 흐림이 최선. 글자 360 → 525 로 늘고, 그대로는
+//     못 읽던 주소까지 읽어냈다. 배경 잡음이 줄어드는 이득이 손실보다 크다.
+// 서버는 어느 쪽인지 알 수 없으므로 둘 다 돌려 보고 점수로 고른다(readTextBestOf).
+// 다만 자르지 않은 폰 원본은 한 판에 20초가 넘어 둘 다 돌릴 수 없고, 거기서는
+// 2400 + 흐림이 확실히 낫다는 것이 이미 측정돼 있다(BIG_INPUT_PIXELS 주석).
+function resizeTarget(shrink: boolean): string {
+  return shrink ? `${PHOTO_EDGE}x${PHOTO_EDGE}>` : `${MAX_EDGE}x${MAX_EDGE}>`;
+}
+
+/** 0..1 로 받은 사각형을 실제 픽셀 좌표로. 화면 밖으로 나가지 않게 가둔다. */
+function cropGeometry(box: CropBox, w: number, h: number) {
+  const cw = Math.max(1, Math.round(box.w * w));
+  const ch = Math.max(1, Math.round(box.h * h));
+  const cx = Math.min(Math.max(0, Math.round(box.x * w)), Math.max(0, w - cw));
+  const cy = Math.min(Math.max(0, Math.round(box.y * h)), Math.max(0, h - ch));
+  return { cw: Math.min(cw, w - cx), ch: Math.min(ch, h - cy), cx, cy };
+}
+
+/**
  * 판독용으로 이미지를 다듬어 새 파일을 만든다. 실패하면 null — 원본을 그대로 쓰면 된다.
  * rotate 는 EXIF 를 적용한 **뒤에** 추가로 돌릴 각도다(책상에 눕혀 놓고 찍은 영수증용).
  *
  * 국소 적응 이진화(-lat)도 재봤지만 감열지에서는 오히려 나빴다(맞춘 항목 6 → 3).
  * 감열 인쇄의 부드러운 농담을 뭉개버린다. 회색조 + normalize 가 가장 좋았다.
  */
-/**
- * 판독 전에 줄일 크기를 정한다 — 폰 원본이면 긴 변 2400, 아니면 안전장치 상한만.
- * 판단 근거는 위 BIG_INPUT_PIXELS 주석에 적어 뒀다.
- */
-async function resizeTarget(srcPath: string): Promise<{ spec: string; photo: boolean }> {
-  const raw = await run(IDENTIFY, ['-format', '%w %h', `${srcPath}[0]`], 8000);
-  const [w, h] = String(raw || '').trim().split(/\s+/).map(Number);
-  if (!w || !h) return { spec: `${MAX_EDGE}x${MAX_EDGE}>`, photo: false };
-  return w * h > BIG_INPUT_PIXELS
-    ? { spec: `${PHOTO_EDGE}x${PHOTO_EDGE}>`, photo: true }
-    : { spec: `${MAX_EDGE}x${MAX_EDGE}>`, photo: false };
-}
-
-async function prepare(srcPath: string, rotate: number): Promise<string | null> {
+async function prepare(
+  srcPath: string,
+  rotate: number,
+  crop: CropBox | undefined,
+  shrink: boolean | 'auto' | 'flip'
+): Promise<string | null> {
   if (!(await preprocessAvailable())) return null;
   const out = `${srcPath}.pp.png`;
-  const resize = await resizeTarget(srcPath);
+
+  const size = await orientedSize(srcPath);
+  const geo = crop && size.w && size.h ? cropGeometry(crop, size.w, size.h) : null;
+
+  // 자르고 난 화소 수로 판단한다. 800만을 넘으면 배경까지 담긴 폰 원본이라는 뜻이고,
+  // 그 아래면 이미 영수증만 남은 판이라는 뜻이다.
+  const pixels = geo ? geo.cw * geo.ch : size.w * size.h;
+  const auto = pixels > BIG_INPUT_PIXELS;
+  const doShrink =
+    shrink === 'auto' ? auto : shrink === 'flip' ? !auto : !!shrink;
+
   const args = [
     '-limit', 'memory', '256MB',
     '-limit', 'map', '512MB',
@@ -230,12 +273,15 @@ async function prepare(srcPath: string, rotate: number): Promise<string | null> 
     '-auto-orient',            // EXIF 회전을 실제 픽셀에 적용
     '-strip',                  // 플래그 제거 — 남겨두면 뒤에서 또 헷갈린다
   ];
+  // 촬영 화면에서 잡은 사각형만 남긴다. 배경(책상·손·옷)이 넓게 들어갈수록 판독이
+  // 나빠지고 느려진다는 것이 실측으로 확인됐다(전체 프레임 25초 · 영수증만 6초).
+  if (geo) args.push('-crop', `${geo.cw}x${geo.ch}+${geo.cx}+${geo.cy}`, '+repage');
   if (rotate) args.push('-rotate', String(rotate));
   args.push(
     '-colorspace', 'Gray',
-    '-resize', resize.spec,    // '>' = 더 큰 경우에만 줄인다
+    '-resize', resizeTarget(doShrink),   // '>' = 더 큰 경우에만 줄인다
   );
-  // 줄인 사진에만 아주 약하게 흐림을 준다.
+  // 줄인 판에만 아주 약하게 흐림을 준다.
   //
   // 처음 이 값을 찾은 건 우연이었다. 실측용으로 미리 줄여 둔 JPEG 로 잰 판은
   // 사업자등록번호를 읽었는데, 같은 처리를 한 번에 이어서 한 판은 못 읽었다.
@@ -245,9 +291,9 @@ async function prepare(srcPath: string, rotate: number): Promise<string | null> 
   //     흐림 없음 → 사업자번호 못 읽음(글자 1510)
   //     -blur 0x0.5 → 201-81-21515 읽음(글자 1939)   ← 채택
   //     -blur 0x0.8 / -gaussian-blur 0x0.6 / -despeckle → 다시 못 읽음
-  // 잘라낸 영수증(축소 안 하는 쪽)에는 적용하지 않는다. 거기서 재 본 적이 없고,
-  // 원래도 잘 읽히던 경로를 검증 없이 건드릴 이유가 없다.
-  if (resize.photo) args.push('-blur', '0x0.5');
+  // 축소와 한 벌로 움직인다. 줄이면서 생긴 계단을 눌러 주는 역할이라, 줄이지 않는
+  // 판에 혼자 얹으면 오히려 획을 뭉갠다(같은 날 crop 판에서 확인).
+  if (doShrink) args.push('-blur', '0x0.5');
   args.push('-normalize', out);
   const r = await run(MAGICK, args, 20000);
   if (r === null) return null;
@@ -332,6 +378,15 @@ export type ReadOpts = {
   rotate?: number;
   /** psm 6 = 균일한 텍스트 블록. 영수증·캡처 모두 실측에서 이게 가장 좋았다. */
   psm?: number;
+  /** 영수증만 남기고 잘라낼 영역. 촬영 화면의 가이드 프레임이 정한다. */
+  crop?: CropBox;
+  /**
+   * 긴 변 2400 으로 줄이고 약하게 흐릴지. 배경이 남은 사진에는 크게 이롭고,
+   * 영수증만 딱 담긴 판에는 해롭다(자세한 실측은 resizeTarget 위 주석).
+   *   'auto' — 자르고 난 크기가 800만 화소를 넘으면 줄인다(폰 원본이라는 뜻)
+   *   'flip' — auto 가 고른 것의 반대. 첫 판이 시원찮을 때 다른 쪽을 대 보는 용도
+   */
+  shrink?: boolean | 'auto' | 'flip';
 };
 
 /**
@@ -350,7 +405,7 @@ export async function readText(image: ImageBytes, opts: ReadOpts = {}): Promise<
   let pp: string | null = null;
   try {
     await fs.promises.writeFile(tmp, image.buf);
-    pp = await prepare(tmp, opts.rotate || 0);
+    pp = await prepare(tmp, opts.rotate || 0, opts.crop, opts.shrink ?? 'auto');
     const target = pp || tmp;
     const out = await run(
       BIN,
@@ -367,26 +422,32 @@ export async function readText(image: ImageBytes, opts: ReadOpts = {}): Promise<
   }
 }
 
+/** 한 번의 판독 시도 — 어떤 각도로, 줄여서 볼지 말지. */
+export type ReadPass = { rotate: number; shrink: boolean };
+
 /**
- * 각도를 돌려가며 읽고, 호출한 쪽이 "제대로 읽혔다" 고 판정한 첫 결과를 준다.
+ * 여러 조건으로 읽어 보고, 호출한 쪽이 매긴 점수가 가장 높은 결과를 준다.
  *
- * 영수증에는 사업자등록번호 체크섬이라는 정답지가 있어서, 방향이 맞았는지를 추측이 아니라
- * 계산으로 안다. tesseract 자체 방향 감지(--psm 0)는 배경이 넓은 사진에서 신뢰도 0.08 에
- * "Arabic" 이라고 답할 만큼 못 미더워서 쓰지 않는다.
+ * 영수증에는 사업자등록번호 체크섬이라는 정답지가 있어서, 어느 판이 제대로 읽혔는지를
+ * 추측이 아니라 계산으로 안다. tesseract 자체 방향 감지(--psm 0)는 배경이 넓은 사진에서
+ * 신뢰도 0.08 에 "Arabic" 이라고 답할 만큼 못 미더워서 쓰지 않는다.
  *
- * 대부분의 사진은 EXIF 보정만으로 똑바로 서므로 첫 번째(0도)에서 끝난다. 눕혀 찍은
- * 경우에만 90/270 을 더 돌린다 — 흔한 경우를 느리게 만들지 않으려는 순서다.
+ * 시도 순서는 호출한 쪽이 정한다 — 흔한 경우가 앞에 와야 첫 판에서 끝난다.
  */
 export async function readTextBestOf(
   image: ImageBytes,
   score: (text: string) => number,
-  opts: { angles?: number[]; enough?: number; budgetMs?: number } = {}
+  opts: { passes?: ReadPass[]; enough?: number; budgetMs?: number; crop?: CropBox } = {}
 ): Promise<{ text: string; rotate: number; score: number }> {
-  const angles = opts.angles ?? [0, 90, 270];
+  const passes = opts.passes ?? [
+    { rotate: 0, shrink: true },
+    { rotate: 90, shrink: true },
+    { rotate: 270, shrink: true },
+  ];
   const enough = opts.enough ?? 0.5;
-  // 각도를 다 돌리면 최악 45초×3 이라 유저가 기다리다 나간다. 한 판이라도 끝났으면
-  // 예산을 넘긴 시점에서 멈춘다 — 남은 각도에서 더 나은 결과가 나올 가능성보다
-  // 응답이 오지 않는 손해가 크다.
+  // 다 돌리면 최악 45초×N 이라 유저가 기다리다 나간다. 한 판이라도 끝났으면 예산을
+  // 넘긴 시점에서 멈춘다 — 남은 시도에서 더 나은 결과가 나올 가능성보다 응답이
+  // 오지 않는 손해가 크다.
   const budgetMs = opts.budgetMs ?? 70000;
   const started = Date.now();
 
@@ -394,12 +455,12 @@ export async function readTextBestOf(
   // 그러면 문턱을 못 넘은 판들이 전부 동점이 되어 결국 글자가 많은 쪽(= 배경 잡음이
   // 많은 쪽)이 뽑혔다. 실측에서 90도 판이 매장 전화번호를 건졌는데도, 문턱을 못 넘었다는
   // 이유로 아무것도 못 건진 0도 판에 밀렸다.
-  let best = { text: '', rotate: angles[0] ?? 0, score: -1 };
-  for (const rotate of angles) {
-    const text = await readText(image, { rotate });
+  let best = { text: '', rotate: passes[0]?.rotate ?? 0, score: -1 };
+  for (const pass of passes) {
+    const text = await readText(image, { ...pass, crop: opts.crop });
     const s = score(text);
-    if (s > best.score) best = { text, rotate, score: s };
-    if (s >= enough) break;   // 충분히 좋으면 남은 각도는 돌리지 않는다
+    if (s > best.score) best = { text, rotate: pass.rotate, score: s };
+    if (s >= enough) break;   // 충분히 좋으면 남은 시도는 하지 않는다
     if (Date.now() - started > budgetMs) break;
   }
   return best;

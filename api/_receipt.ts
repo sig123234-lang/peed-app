@@ -305,16 +305,30 @@ const METROS = [
   '충청', '전라', '경상',
 ];
 
-/** 주소 — 시·도로 시작하는 줄. 도장 패스포트의 지역 판별에 그대로 넘긴다. */
+/**
+ * 주소 — 시·도가 들어간 줄. 도장 패스포트의 지역 판별과, 회원이 고른 매장이 맞는지
+ * 맞춰 보는 데 쓴다. 매장 식별을 영수증 상호에서 주소로 옮긴 뒤로 이 함수가
+ * 판독에서 가장 중요한 자리가 됐다.
+ *
+ * 예전에는 '시·도로 시작하는 줄' 만 받았는데, 실측(2026-08-14)에서 멀쩡히 읽힌 주소가
+ * 그 조건 하나로 다 떨어졌다 — 감열지 판독은 줄 앞머리에 부스러기가 붙는 게 예사다
+ * (`= 서울 마포구…`, `[주소] 서울…`, `| 서울…`). 그래서 시·도가 줄의 **앞부분 어딘가**
+ * 에 있으면 거기서부터 잘라 쓴다. 뒤쪽에 있는 '서울' 은 상호나 안내문일 수 있어 받지 않는다.
+ */
 export function findAddress(raw: string): string {
   const lines = String(raw || '').split('\n').map((l) => l.trim());
   for (const line of lines) {
-    const body = line.replace(/^(?:주\s*소|가맹점\s*주소|사업장\s*주소)\s*[:：]?\s*/, '').trim();
-    if (body.length < 6 || body.length > 80) continue;
-    if (!METROS.some((m) => body.startsWith(m))) continue;
-    // 구·군·시·로·길 중 하나는 있어야 주소다(상호에 '서울' 이 들어간 경우를 거른다).
-    if (!/[구군시읍면동로길]/.test(body)) continue;
-    return body;
+    const stripped = line.replace(/^(?:주\s*소|가맹점\s*주소|사업장\s*주소)\s*[:：]?\s*/, '');
+    for (const m of METROS) {
+      const at = stripped.indexOf(m);
+      // 앞머리 부스러기는 봐주되(12글자까지), 줄 한복판부터는 주소로 보지 않는다.
+      if (at < 0 || at > 12) continue;
+      const body = stripped.slice(at).trim();
+      if (body.length < 6 || body.length > 80) continue;
+      // 구·군·시·로·길 중 하나는 있어야 주소다(상호에 '서울' 이 들어간 경우를 거른다).
+      if (!/[구군시읍면동로길]/.test(body)) continue;
+      return body;
+    }
   }
   return '';
 }

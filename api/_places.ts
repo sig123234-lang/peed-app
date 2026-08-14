@@ -1,6 +1,6 @@
 import { normalizeStoreName } from './_match';
 import { getJSON } from './_store';
-import { matchRegion, regionKey } from '../data/regions';
+import { REGIONS, matchRegion, regionKey } from '../data/regions';
 
 // 매장 찾기 — 회원이 이름을 치면 **지점까지 특정된 매장**을 골라 준다.
 //
@@ -303,6 +303,34 @@ function roadKey(address: string): string {
 }
 
 /**
+ * 영수증에 찍힌 주소가 어느 시·군·구인지. 판독 오차를 견디게 헐겁게 본다.
+ *
+ * 정식 판별(matchRegion)은 '마포구' 처럼 온전한 이름을 요구하는데, 감열지 판독은
+ * 끝 한 글자를 자주 흘린다. 실측(2026-08-14)에서 `서울.마포 와무산로 64S` 가 그랬다 —
+ * 사람 눈에는 마포구가 분명한데 '구' 하나가 없어서 판별이 통째로 실패했고, 그 바람에
+ * 엉뚱한 매장을 골라도 어긋났다고 말할 수 없었다.
+ *
+ * 그래서 끝 글자를 뗀 이름('마포')도 받아 준다. 다만 한 글자로 줄어드는 이름('중구'→'중')
+ * 은 아무 데나 걸리므로 온전한 형태만 쓰고, 시·도까지 함께 있어야 인정한다.
+ * 긴 이름부터 보는 이유는 짧은 이름이 먼저 걸려 엉뚱한 구로 확정되는 걸 막기 위해서다.
+ */
+function readRegionLoosely(address: string): string {
+  const text = String(address || '');
+  if (!text) return '';
+
+  const strict = matchRegion(text);
+  if (strict) return regionKey(strict);
+
+  const sorted = [...REGIONS].sort((a, b) => b.name.length - a.name.length);
+  for (const r of sorted) {
+    if (!text.includes(r.sido)) continue;
+    const short = r.name.replace(/(구|군|시)$/, '');
+    if (short.length >= 2 && text.includes(short)) return regionKey(r);
+  }
+  return '';
+}
+
+/**
  * 회원이 고른 매장과 영수증이 같은 곳을 가리키는지 본다.
  *
  * 근거는 주소다. 전화번호는 프랜차이즈 대표번호·안심번호 때문에 지점을 못 가리고,
@@ -315,10 +343,7 @@ export function checkPlaceAgainstReceipt(
   place: Place,
   receipt: { address: string; phone: string }
 ): PlaceCheck {
-  const receiptRegion = (() => {
-    const m = matchRegion(receipt.address || '');
-    return m ? regionKey(m) : '';
-  })();
+  const receiptRegion = readRegionLoosely(receipt.address || '');
 
   if (receiptRegion && place.region) {
     if (receiptRegion !== place.region) {
