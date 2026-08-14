@@ -5,6 +5,7 @@ import { resolveStore } from './_match';
 import * as notifs from './_notifs';
 import * as push from './_push';
 import { recordPbEvent } from './_pb';
+import { rateLimited, searchPlaces } from './_places';
 import { CLAIM_DAYS, claimPrize, claimState, expiresAt } from './_prize';
 import * as lk from './_livekit';
 import * as reservations from './_reservations';
@@ -248,6 +249,27 @@ async function handleReport(uid: string, b: any, res: any) {
 // 어드민 '공지·알림'에서 작성한 글을 앱 공지 화면에 그대로 내보낸다.
 // 예전에는 app/notice.tsx 에 공지가 하드코딩돼 있어서 어드민에서 쓴 글이
 // 앱에 뜨지 않았고, 공지 하나 고치려면 재배포가 필요했다.
+/**
+ * 매장 찾기 — 회원이 이름을 치면 지점까지 특정된 후보를 준다(자세한 배경은 _places.ts).
+ *
+ * 로그인을 요구하지 않는다. 리뷰를 쓰려면 어차피 로그인해야 하지만, 매장을 찾아보는
+ * 것까지 막으면 둘러보는 사람에게 PEED 가 뭘 하는 곳인지 보여줄 기회를 잃는다.
+ * 대신 호출 제한을 uid(없으면 IP)로 걸어 카카오 한도를 지킨다.
+ */
+async function handleSearchPlace(uid: string, req: any, res: any) {
+  const ip = String(
+    (req.headers?.['x-forwarded-for'] || '').split(',')[0].trim() ||
+      req.socket?.remoteAddress ||
+      ''
+  );
+  if (rateLimited(uid || ip || 'unknown')) {
+    res.status(429).json({ ok: false, error: 'too_many_requests' });
+    return;
+  }
+  const r = await searchPlaces(String(req.query?.q || ''));
+  res.status(200).json({ ok: true, items: r.items, external: r.external });
+}
+
 async function handleNotices(res: any) {
   const raw = await getJSON<any[]>('v2/notices.json', []);
   const items = raw
@@ -1364,6 +1386,7 @@ export default async function handler(req: any, res: any) {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     // 채팅은 별도 로컬 컬렉션(v2/chat_*.json) — 아래 storeConfigured 게이트와 무관.
     if (action === 'notices') return await handleNotices(res);
+    if (action === 'searchPlace') return await handleSearchPlace(uid, req, res);
     if (action === 'pushKey') {
       // 클라이언트가 구독할 때 필요한 VAPID 공개키. 비밀키는 절대 내보내지 않는다.
       res.status(200).json({
